@@ -88,6 +88,12 @@ See `src/core/render.ts` and `src/core/pdf.ts`.
 
 - **"No .page blocks found"** — the HTML must contain
   `<div class="page">…</div>` sections. Re-prompt the agent with the snippet above.
+- **Blank preview/PDF but the HTML looks fine in the browser** — the file
+  probably hides pages until a scroll-reveal script runs (e.g.
+  `.page{opacity:0}` + `.page.seen{opacity:1}` via `IntersectionObserver`).
+  Uploaded scripts never run in the raster pipeline, so the tool hoists
+  `@media print` rules to the screen and forces the page shell visible
+  (`opacity:1`, no transform/transition). No action needed — just re-upload.
 - **Blank images/fonts in preview or PDF** — `html2canvas` needs CORS-enabled
   URLs (`Access-Control-Allow-Origin`). The app shows a warning listing external
   images/stylesheets/webfonts; inline them as `data:` URLs or self-host them.

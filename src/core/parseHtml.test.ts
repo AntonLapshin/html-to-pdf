@@ -56,6 +56,25 @@ describe("buildPageSrcDoc", () => {
     expect(srcDoc).toContain("text-align:center");
   });
 
+  it("forces scroll-reveal pages visible and hoists print rules (guide_30.html regression)", () => {
+    const doc = parseHtmlPages(
+      `<html><head><style>.page{opacity:0;transform:translateY(16px);}` +
+        `.page.seen{opacity:1;transform:none;}` +
+        `@media print{.page{opacity:1 !important;}}</style></head>` +
+        `<body><div class="page"><p>Guide</p></div></body></html>`,
+    );
+    const srcDoc = buildPageSrcDoc(doc.pages[0], doc.styles, {
+      marginsMm: { top: 10, right: 10, bottom: 10, left: 10 },
+      pageNumberText: null,
+    });
+    expect(srcDoc).toContain("<p>Guide</p>");
+    // Hoisted print intent + reveal override both come after the screen rule.
+    const revealPos = srcDoc.indexOf(".pdf-scope{opacity:0;");
+    expect(revealPos).toBeGreaterThan(-1);
+    expect(srcDoc.indexOf("opacity:1 !important", revealPos)).toBeGreaterThan(revealPos);
+    expect(srcDoc).toContain("pdf-scope seen");
+  });
+
   it("aligns numbers left/right per position and omits the div when hidden", () => {
     const doc = parseHtmlPages(SOURCE);
     const left = buildPageSrcDoc(doc.pages[0], doc.styles, {

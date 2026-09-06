@@ -127,6 +127,55 @@ function scopeCssInner(css: string, scope: string): string {
   return scopeCss(css, scope);
 }
 
+/**
+ * Pull the inner CSS out of `@media print { … }` blocks (brace-aware, so
+ * nested rules survive). The raster pipeline is print output, but
+ * html2canvas renders with screen media and therefore ignores print rules —
+ * hoisting them as plain screen rules honors the author's print intent
+ * (e.g. `guide_30.html` forces `.page{opacity:1!important}` for print while
+ * the screen CSS keeps pages at `opacity:0` until a scroll-reveal script
+ * adds `.seen`, a script we intentionally never run).
+ */
+export function extractPrintCss(css: string): string {
+  const clean = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  let out = "";
+  const re = /@media[^{]*\{/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(clean)) !== null) {
+    if (!/print/i.test(m[0])) continue;
+    let depth = 1;
+    let i = m.index + m[0].length;
+    let body = "";
+    while (i < clean.length && depth > 0) {
+      if (clean[i] === "{") depth++;
+      else if (clean[i] === "}") depth--;
+      if (depth > 0) body += clean[i];
+      i++;
+    }
+    out += `${body}\n`;
+  }
+  return out;
+}
+
+/**
+ * Safety net for scroll-reveal / fade-in patterns
+ * (`.page{opacity:0;…}` + `.page.seen{opacity:1}`, `.visible`, …).
+ * Uploaded scripts never run in the raster pipeline and `innerHTML`
+ * extraction drops the reveal class, so without this the page shell would
+ * rasterize invisible. Scoped to the shell only (`.pdf-scope` + inner
+ * `.page`) so legitimate descendant transparency (ornaments, SVG paths)
+ * keeps multiplying as designed — an opaque ancestor never forces
+ * descendants opaque.
+ */
+export const REVEAL_OVERRIDE =
+  ".pdf-scope,.pdf-scope .page{opacity:1 !important;transform:none !important;" +
+  "visibility:visible !important;transition:none !important;" +
+  "animation:none !important;filter:none !important;}";
+
+/** Reveal-state classes mirrored onto the shell so `.page.seen …`-derived
+ * selectors (scoped to `.pdf-scope.seen …`) keep matching. */
+export const SEEN_CLASSES = "seen visible shown revealed loaded in-view";
+
 export function numberOverlayStyle(position: NumberPosition): string {
   const base =
     "position:absolute;left:0;right:0;font-size:11px;color:#64748b;pointer-events:none;";
@@ -152,6 +201,9 @@ export function buildRenderHolder(
   const margins = effectiveMargins(settings);
   const scope = ".pdf-scope";
   const scoped = scopeCss(page.styles, scope);
+  // Hoisted print rules come after the screen rules so the author's print
+  // intent wins; the reveal override comes last as the final safety net.
+  const hoistedPrint = scopeCss(extractPrintCss(page.styles), scope);
   const holder = document.createElement("div");
   holder.style.cssText = [
     `width:${dims.width}px`,
@@ -162,11 +214,11 @@ export function buildRenderHolder(
     "position:relative",
   ].join(";");
   holder.innerHTML =
-    `<style>${scoped}</style>` +
-    `<div class="${scope.slice(1)}" style="box-sizing:border-box;width:100%;height:100%;` +
+    `<style>${scoped}\n${hoistedPrint}\n${REVEAL_OVERRIDE}</style>` +
+    `<div class="${scope.slice(1)} ${SEEN_CLASSES}" style="box-sizing:border-box;width:100%;height:100%;` +
     `padding:${mmToPx(margins.top)}px ${mmToPx(margins.right)}px ` +
     `${mmToPx(margins.bottom)}px ${mmToPx(margins.left)}px;position:relative;background:#fff;overflow:hidden;">` +
-    `<div class="page" style="box-sizing:border-box;width:100%;height:100%;overflow:hidden;">${page.html}</div>` +
+    `<div class="page ${SEEN_CLASSES}" style="box-sizing:border-box;width:100%;height:100%;overflow:hidden;">${page.html}</div>` +
     (settings.showPageNumbers
       ? `<div class="page-number" style="${numberOverlayStyle(settings.numberPosition)}">` +
         `${pageNumberText(settings.showPageNumbers, settings.startPageNumber, pageIndex, total) ?? ""}</div>`

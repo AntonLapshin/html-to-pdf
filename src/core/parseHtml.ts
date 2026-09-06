@@ -1,4 +1,4 @@
-import { scopeCss } from "./render";
+import { extractPrintCss, REVEAL_OVERRIDE, scopeCss, SEEN_CLASSES } from "./render";
 import { effectiveMargins, type NumberPosition, type PageSize } from "./settings";
 
 export interface ParsedPage {
@@ -52,6 +52,9 @@ export function buildPageSrcDoc(
   const align =
     pos === "bottom-left" ? "left" : pos === "bottom-right" ? "right" : "center";
   const scoped = scopeCss(styles, ".pdf-scope");
+  // Same print-hoisting + reveal safety net as the canvas pipeline
+  // (see `core/render.ts`) so the modal matches the raster.
+  const hoistedPrint = scopeCss(extractPrintCss(styles), ".pdf-scope");
   return `<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;padding:0;background:#fff;}
 body{font-family:ui-sans-serif,system-ui,sans-serif;}
@@ -59,7 +62,9 @@ body{font-family:ui-sans-serif,system-ui,sans-serif;}
 padding:${opts.marginsMm.top}mm ${opts.marginsMm.right}mm ${opts.marginsMm.bottom}mm ${opts.marginsMm.left}mm;}
 .page-number{position:absolute;left:0;right:0;bottom:6mm;text-align:${align};font-size:11px;color:#64748b;}
 ${scoped}
-</style></head><body><div class="pdf-scope"><div class="page">${page.html}</div>${
+${hoistedPrint}
+${REVEAL_OVERRIDE}
+</style></head><body><div class="pdf-scope ${SEEN_CLASSES}"><div class="page ${SEEN_CLASSES}">${page.html}</div>${
     opts.pageNumberText
       ? `<div class="page-number">${opts.pageNumberText}</div>`
       : ""
