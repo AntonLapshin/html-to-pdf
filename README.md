@@ -84,6 +84,62 @@ Export pipeline is ported from
 the preview thumbnails, so preview pixels == PDF pixels by construction.
 See `src/core/render.ts` and `src/core/pdf.ts`.
 
+## Local Python rendering (WeasyPrint)
+
+The browser raster above is faithful by construction, but it is **not**
+pixel-identical to live browser layout — `html2canvas` drops blend modes /
+modern selectors and can misalign text. For pixel comparison,
+`scripts/` renders the same `.page`-split HTML with
+[WeasyPrint](https://weasyprint.org/) (no browser involved): deterministic
+output with native `@page` margins and `counter(page)` numbers, lighter
+than headless Chromium.
+
+Simple command with default settings (A4, 10mm margins, `N / total` numbers):
+
+```bash
+pip install -r scripts/requirements.txt   # one-time (or reuse /tmp/pdfvenv)
+./scripts/render.sh public/sample/slowliving-sample.html
+# → out/slowliving-sample.pdf (one PDF page per `.page` block)
+npm run pdf -- public/sample/slowliving-sample.html out/custom.pdf  # same via npm
+```
+
+Options (all optional, defaults mirror the app's `DEFAULT_SETTINGS`):
+
+```bash
+./scripts/render.sh guide.html out/guide.pdf --page-size letter --margin 12 --no-numbers
+./scripts/render.sh guide.html --number-format dash --number-position bottom-right --start 3
+./scripts/render.sh guide.html --margin-top 12 --margin-bottom 14
+```
+
+Technique: `render.py` injects a print block before rendering — `@page`
+carries size/margin/background (a `body` background leaves pages white),
+numbers come from `@page @bottom-center { content: ... }` (`slash` for app
+parity, `dash` for the slow-living `— N —` look), start offset via
+`@page:first { counter-reset: page N; }`, and `.page` blocks are pinned to
+one PDF page each via `page-break-after`. `base_url` is the input file's
+directory, so relative assets and local `@font-face` TTFs resolve; prefer
+local fonts over CDN (everything embedded, no network dependency).
+
+Verify afterwards (non-negotiable — no vision tool here):
+
+```bash
+./scripts/verify.sh public/sample/slowliving-sample.html out/slowliving-sample.pdf
+```
+
+which runs `pdfinfo` (page count == `.page` blocks, no spill), `pdffonts`
+(every font `emb yes`; a surprise family means glyph fallback — e.g. Lora
+lacks some hyphens/unicode fractions and silently pulls in Noto),
+`verify_pdf_layout.py` (per-page background + content-bottom %,
+catches near-blank pages from one-line overflows), `word_fidelity_diff.py`
+(word-multiset diff of PDF text vs source HTML, catches dropped
+paragraphs), `scan_glyphs.py`, and a `pdftoppm` raster spot-check whose
+PNGs are the pixel-comparison input. Short samples legitimately flag
+`UNDERFILLED` — that heuristic is tuned for full guide pages.
+
+Gotchas: grid layout is shaky in WeasyPrint and `float` drop-caps crash it
+(keep initials inline); Playwright/Chromium print-to-PDF is the fallback
+if a design ever needs those.
+
 ## Troubleshooting
 
 - **"No .page blocks found"** — the HTML must contain
@@ -122,6 +178,8 @@ See `src/core/render.ts` and `src/core/pdf.ts`.
 - `npm run lint` — oxlint
 - `npm run test` — vitest (`src/core/*.test.ts`: parse, numbering, settings,
   CSS scoping, project save/load, autosave/recents)
+- `npm run pdf -- input.html [output.pdf]` — WeasyPrint render with defaults
+  (see "Local Python rendering" above)
 
 ## Deploy
 
