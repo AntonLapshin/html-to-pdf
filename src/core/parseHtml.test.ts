@@ -103,6 +103,19 @@ describe("buildPageSrcDoc", () => {
     expect(hidden).not.toContain('<div class="page-number"');
   });
 
+  it("resets screen shell margin/shadow so the modal matches the raster", () => {
+    const doc = parseHtmlPages(
+      `<html><head><style>@media screen{.page{margin:18pt auto;box-shadow:0 2pt 12pt black;}}</style></head>` +
+        `<body><div class="page"><p>Hi</p></div></body></html>`,
+    );
+    const srcDoc = buildPageSrcDoc(doc.pages[0], doc.styles, {
+      marginsMm: { top: 10, right: 10, bottom: 10, left: 10 },
+      pageNumberText: null,
+    });
+    expect(srcDoc).toContain("box-shadow:none");
+    expect(srcDoc.indexOf("box-shadow:none")).toBeGreaterThan(srcDoc.indexOf("box-shadow:0 2pt"));
+  });
+
   it("re-injects stylesheet links so webfonts load in the modal", () => {
     const doc = parseHtmlPages(
       `<html><head><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">` +

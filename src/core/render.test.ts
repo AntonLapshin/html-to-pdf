@@ -5,14 +5,18 @@ import {
   clearInlineCache,
   collectExternalRefs,
   collectExternalRefsForPages,
+  collectLocalFontUrls,
   corsWarning,
+  embedFontsInSource,
   extractPageBackground,
   extractPrintCss,
   inlineExternalAssets,
+  inlineExternalStylesheets,
   measureOverflow,
   numberOverlayStyle,
   REVEAL_OVERRIDE,
   scopeCss,
+  SHELL_RESET,
   waitForHolderAssets,
 } from "./render";
 
@@ -293,5 +297,137 @@ describe("collectExternalRefs + corsWarning", () => {
     };
     const out = await inlineExternalAssets(page);
     expect(out.html).toContain("https://cdn.example/a.png");
+  });
+});
+
+describe("shell reset (v7_fixed.html @media screen regression)", () => {
+  it("neutralizes screen margin/shadow on the scope in raster holders", () => {
+    const holder = buildRenderHolder(
+      {
+        html: "<p>x</p>",
+        styles: "@media screen{.page{margin:18pt auto;box-shadow:0 2pt 12pt rgba(0,0,0,.2);}}",
+      },
+      DEFAULT_SETTINGS,
+      0,
+      1,
+    );
+    const styleText = holder.querySelector("style")?.textContent ?? "";
+    expect(styleText).toContain(SHELL_RESET);
+    expect(styleText.indexOf(SHELL_RESET)).toBeGreaterThan(styleText.indexOf("box-shadow:0 2pt"));
+  });
+});
+
+describe("local fonts + webfont counting (v7_fixed_p21_23.html regression)", () => {
+  const V7_STYLES =
+    `@font-face{font-family:"NotoSerif";src:url("_fonts/NotoSerif-Regular.ttf");}` +
+    `@font-face{font-family:"NotoSerif";src:url("_fonts/NotoSerif-Bold.ttf");font-weight:700;}` +
+    `@font-face{font-family:"Segoe UI Symbol";src:url("C:/Windows/Fonts/seguisym.ttf");}`;
+
+  it("detects relative and machine-local @font-face URLs, not remote ones", () => {
+    expect(collectLocalFontUrls(V7_STYLES)).toEqual(
+      expect.arrayContaining([
+        "_fonts/NotoSerif-Regular.ttf",
+        "_fonts/NotoSerif-Bold.ttf",
+        "C:/Windows/Fonts/seguisym.ttf",
+      ]),
+    );
+    expect(collectLocalFontUrls(`@font-face{src:url(https://cdn.example/f.woff2);}`)).toEqual([]);
+    expect(collectLocalFontUrls("p{color:red;}")).toEqual([]);
+  });
+
+  it("counts shared @font-face rules once, not once per page", () => {
+    // 3 faces × 23 pages used to warn "138 webfont(s) detected".
+    const pages = Array.from({ length: 23 }, (_, i) => ({
+      html: `<p>page ${i}</p>`,
+      styles: V7_STYLES,
+    }));
+    const refs = collectExternalRefsForPages(pages);
+    expect(refs.fontFaces).toBe(3);
+    expect(refs.localFonts).toHaveLength(3);
+    expect(corsWarning(refs)).toContain("3 webfont(s)");
+    expect(corsWarning(refs)).toContain("3 local font file(s)");
+  });
+
+  it("tells the user how to fix local fonts", () => {
+    const warning = corsWarning(collectExternalRefs({ html: "<p>x</p>", styles: V7_STYLES }));
+    expect(warning).toContain("Attach fonts");
+    expect(warning).toContain("inline-local-fonts.py");
+  });
+});
+
+describe("embedFontsInSource", () => {
+  const DATA = "data:font/ttf;base64,AAAA";
+  it("replaces matching basenames (relative dirs, backslashes, any case)", () => {
+    const src =
+      `<style>@font-face{src:url("_fonts/NotoSerif-Regular.ttf");}` +
+      `@font-face{src:url('C:\\Windows\\Fonts\\SEGUISYM.ttf');}` +
+      `a{background:url(https://cdn.example/bg.png);}</style>`;
+    const { source, matched } = embedFontsInSource(src, [
+      { name: "NotoSerif-Regular.ttf", dataUrl: DATA },
+      { name: "seguisym.ttf", dataUrl: DATA },
+    ]);
+    expect(matched).toBe(2);
+    expect(source).not.toContain("_fonts/NotoSerif-Regular.ttf");
+    expect(source).not.toContain("SEGUISYM.ttf");
+    expect(source).toContain(`url("${DATA}")`);
+    expect(source).toContain("https://cdn.example/bg.png");
+  });
+
+  it("reports zero matches when nothing lines up", () => {
+    const { source, matched } = embedFontsInSource("p{color:red;}", [
+      { name: "Noto.ttf", dataUrl: DATA },
+    ]);
+    expect(matched).toBe(0);
+    expect(source).toBe("p{color:red;}");
+  });
+});
+
+describe("inlineExternalStylesheets", () => {
+  afterEach(() => {
+    clearInlineCache();
+    vi.unstubAllGlobals();
+  });
+
+  it("folds fetched stylesheets into styles with font URLs inlined", async () => {
+    const fontBlob = new Blob(["fake-woff2"], { type: "font/woff2" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).endsWith("fonts.css")) {
+          return {
+            ok: true,
+            text: async () => `@font-face{font-family:G;src:url(../fonts/g.woff2);}`,
+          };
+        }
+        if (String(url).endsWith("g.woff2")) {
+          return { ok: true, blob: async () => fontBlob };
+        }
+        throw new Error(`unexpected ${url}`);
+      }),
+    );
+    const out = await inlineExternalStylesheets({
+      html: "<p>x</p>",
+      styles: "p{color:red;}",
+      links: ["https://cdn.example/fonts.css"],
+    });
+    expect(out.links).toEqual([]);
+    expect(out.styles).toContain("p{color:red;}");
+    expect(out.styles).toContain("data:font/woff2;base64,");
+    expect(out.styles).not.toContain("../fonts/g.woff2");
+  });
+
+  it("keeps the link when the stylesheet cannot be fetched", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("CORS blocked");
+      }),
+    );
+    const out = await inlineExternalStylesheets({
+      html: "<p>x</p>",
+      styles: "",
+      links: ["https://cdn.example/fonts.css", "local/theme.css"],
+    });
+    expect(out.links).toEqual(["https://cdn.example/fonts.css", "local/theme.css"]);
   });
 });

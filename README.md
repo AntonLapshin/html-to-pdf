@@ -2,7 +2,7 @@
 
 Pure-UI tool: upload any HTML already split into `.page` blocks → accurate
 per-page PDF preview (click to expand) → tune margins / page numbers / DPI →
-download an A4 PDF where **each `.page` DOM tree is exactly one PDF page**.
+download a PDF where **each `.page` DOM tree is exactly one PDF page**.
 
 Live demo: `https://antonlapshin.github.io/html-to-pdf/`
 
@@ -58,8 +58,14 @@ Keep every page short enough to fit one A4 page at 10mm margins.
 
 ## Settings reference
 
-- **Page size**: A4 (210×297mm) or Letter (215.9×279.4mm).
-- **Margins**: uniform slider or per-edge (top/right/bottom/left), 0–40mm.
+- **Page size**: A4 (210×297mm) or Letter (215.9×279.4mm). On upload the
+  tool auto-detects the file's design (`@page { size: … }` or `.page`
+  width/height) and switches to it.
+- **Margins**: **From HTML** (default on upload — reuses the file's own
+  `.page` padding, e.g. `padding: 48pt 51pt …` → ~17/18/19/18mm), uniform
+  slider, or per-edge (top/right/bottom/left), 0–40mm. The browser-viewer
+  rules (`@media screen` margins/shadows on `.page`) are always reset so
+  they can't leak into the PDF.
 - **Page numbers**: `N / total` overlay starting from a configurable number,
   positioned bottom-center/left/right (baked into the raster so preview == PDF).
 - **DPI** (72–300): raster resolution via `scale = DPI/96`.
@@ -168,14 +174,31 @@ as ADDED — classify the residual rather than chasing zero.
   Uploaded scripts never run in the raster pipeline, so the tool hoists
   `@media print` rules to the screen and forces the page shell visible
   (`opacity:1`, no transform/transition). No action needed — just re-upload.
-- **Blank images/fonts in preview or PDF** — `html2canvas` needs CORS-enabled
-  URLs (`Access-Control-Allow-Origin`). The app shows a warning listing external
-  images/stylesheets/webfonts; inline them as `data:` URLs or self-host them.
-  The raster pipeline now helps automatically: linked stylesheets (e.g. Google
-  Fonts) are re-injected into each page, rendering waits for webfonts/images
-  (`document.fonts.ready` + image decode, bounded ~5s), and CORS-fetchable
-  remote images are inlined to `data:` URLs before rasterizing. Anything left
-  over (non-CORS hosts, unfetchable URLs) still needs manual inlining.
+- **Margins gone after upload** — shouldn't happen anymore: the tool adopts
+  the file's `.page` padding as margins and its `@page`/`.page` geometry as
+  page size (blue "Using margins from HTML…" notice). If you see 10mm
+  defaults instead, the file has no `.page` padding — pick specific margins
+  in General settings.
+- **Blank images/fonts in preview or PDF** — two different causes, the app
+  warning tells them apart:
+  - *Remote URLs* (`https://…`): `html2canvas` needs CORS-enabled URLs
+    (`Access-Control-Allow-Origin`). The raster pipeline auto-inlines
+    CORS-fetchable remote images, font files, and whole linked stylesheets
+    (e.g. Google Fonts) to `data:` URLs before rasterizing, and waits for
+    webfonts/images (`document.fonts.ready` + image decode, bounded ~5s).
+    Anything left blank (non-CORS hosts) must be inlined as `data:` URLs or
+    self-hosted. CORS bypasses that work: serve the assets from the same
+    origin, add `Access-Control-Allow-Origin: *` on the asset host, or
+    download the files and reference/inline them locally.
+  - *Local font files* (`_fonts/*.ttf`, `C:\Windows\Fonts\…`): an uploaded
+    file is read as text, so the browser can never see sibling font files —
+    these **always** render as fallback fonts until inlined. Three fixes
+    (pick one): click **Attach font files…** under the warning and pick the
+    referenced `.ttf/.otf/.woff2` files; bake them offline with
+    `python3 scripts/inline-local-fonts.py guide.html` (→
+    `guide.inlined.html`); or swap the `@font-face` blocks for a Google
+    Fonts `<link>` (e.g. Noto Serif) — linked stylesheets are re-injected
+    per page and auto-inlined at render time.
 - **⚠ overflows badge** — the page content is taller than the usable area at
   current margins and will be clipped. Shorten the content or lower the margins.
 - **Tailwind classes in uploaded HTML don't render** — uploaded pages only get
@@ -198,6 +221,10 @@ as ADDED — classify the residual rather than chasing zero.
   CSS scoping, project save/load, autosave/recents)
 - `npm run pdf -- input.html [output.pdf]` — WeasyPrint render with defaults
   (see "Local Python rendering" above)
+- `python3 scripts/inline-local-fonts.py guide.html [--font-dirs DIR …]
+  [--extra-font Name.ttf=/path/to.ttf] [-o out.html]` — bake local
+  `@font-face` files into the HTML as `data:` URLs (fixes blank/wrong fonts
+  after upload; no dependencies, stdlib only)
 
 ## Deploy
 

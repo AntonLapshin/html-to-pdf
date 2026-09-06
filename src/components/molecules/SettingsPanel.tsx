@@ -1,16 +1,20 @@
 import { Toggle } from "../atoms/Toggle";
 import { Slider } from "../atoms/Slider";
-import { clampSettings, type PdfSettings } from "../../core/settings";
+import { clampSettings, extractPagePadding, type PdfSettings } from "../../core/settings";
 
 /** Molecule: full Phase-2 settings — size, margins, numbers, DPI/quality. */
 export function SettingsPanel({
   settings,
   onChange,
+  htmlStyles,
 }: {
   settings: PdfSettings;
   onChange: (s: PdfSettings) => void;
+  /** Uploaded `<style>` text — used to preview the HTML's own `.page` padding. */
+  htmlStyles?: string;
 }) {
   const set = (patch: Partial<PdfSettings>) => onChange(clampSettings({ ...settings, ...patch }));
+  const htmlPadding = htmlStyles ? extractPagePadding(htmlStyles) : null;
 
   return (
     <section className="space-y-4 bg-white p-4 shadow-sm ring-1 ring-slate-200">
@@ -28,12 +32,27 @@ export function SettingsPanel({
         </select>
       </label>
 
-      <Toggle
-        label="Custom per-edge margins"
-        checked={settings.marginMode === "custom"}
-        onChange={(v) => set({ marginMode: v ? "custom" : "uniform" })}
-      />
-      {settings.marginMode === "uniform" ? (
+      <label className="flex items-center justify-between text-sm text-slate-600">
+        <span>Margins</span>
+        <select
+          value={settings.marginMode}
+          onChange={(e) => set({ marginMode: e.target.value as PdfSettings["marginMode"] })}
+          className="border border-slate-300 px-2 py-1 text-sm"
+          title="From HTML reuses the uploaded file's own .page padding"
+        >
+          <option value="html">From HTML (.page padding)</option>
+          <option value="uniform">Uniform</option>
+          <option value="custom">Custom per-edge</option>
+        </select>
+      </label>
+      {settings.marginMode === "html" ? (
+        <p className="text-xs text-slate-500">
+          {htmlPadding
+            ? `Using the file's .page padding — top ${htmlPadding.top.toFixed(1)} · right ${htmlPadding.right.toFixed(1)} · bottom ${htmlPadding.bottom.toFixed(1)} · left ${htmlPadding.left.toFixed(1)} mm.`
+            : "This file declares no .page padding — falling back to the uniform margin below."}
+        </p>
+      ) : null}
+      {settings.marginMode === "uniform" || (settings.marginMode === "html" && !htmlPadding) ? (
         <Slider
           label="Margin"
           value={settings.marginMm}
@@ -42,7 +61,8 @@ export function SettingsPanel({
           unit=" mm"
           onChange={(marginMm) => set({ marginMm })}
         />
-      ) : (
+      ) : null}
+      {settings.marginMode === "custom" ? (
         <div className="space-y-2">
           {(["top", "right", "bottom", "left"] as const).map((edge) => (
             <Slider
@@ -56,7 +76,7 @@ export function SettingsPanel({
             />
           ))}
         </div>
-      )}
+      ) : null}
 
       <Toggle
         label="Show page numbers"

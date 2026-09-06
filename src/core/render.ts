@@ -180,6 +180,16 @@ export const REVEAL_OVERRIDE =
 export const SEEN_CLASSES = "seen visible shown revealed loaded in-view";
 
 /**
+ * Shell reset for the author's page-frame rules.
+ * `.page` selectors are rewritten to `.pdf-scope`, so frame declarations the
+ * author meant for the browser viewer — `@media screen { .page { margin:…;
+ * box-shadow:… } }` — would otherwise shrink the content and paint a drop
+ * shadow inside the PDF. The tool owns this geometry (inline size + margins),
+ * so margin/shadow are neutralized here, after all authored CSS.
+ */
+export const SHELL_RESET = ".pdf-scope{margin:0 !important;box-shadow:none !important;}";
+
+/**
  * Read the author's page background out of uploaded `<style>` CSS.
  * Looks at `.page` rules (last one wins, like the cascade) for a flat
  * `background-color` / `background` color. Returns the raw color value
@@ -243,7 +253,9 @@ export function buildRenderHolder(
   total: number,
 ): HTMLElement {
   const dims = pageDimsPx(settings.pageSize);
-  const margins = effectiveMargins(settings);
+  // `html` margin mode resolves the author's own `.page` padding from the
+  // uploaded CSS, so files designed with baked-in margins keep them.
+  const margins = effectiveMargins(settings, page.styles);
   const scope = ".pdf-scope";
   const scoped = scopeCss(page.styles, scope);
   // Hoisted print rules come after the screen rules so the author's print
@@ -268,7 +280,7 @@ export function buildRenderHolder(
     (page.links ?? [])
       .map((href) => `<link rel="stylesheet" href="${escapeAttr(href)}" crossorigin="anonymous">`)
       .join("") +
-    `<style>.pdf-scope{background:#fff;}\n${scoped}\n${hoistedPrint}\n${REVEAL_OVERRIDE}</style>` +
+    `<style>.pdf-scope{background:#fff;}\n${scoped}\n${hoistedPrint}\n${SHELL_RESET}\n${REVEAL_OVERRIDE}</style>` +
     `<div class="${scope.slice(1)} ${SEEN_CLASSES}" style="box-sizing:border-box;width:100%;height:100%;` +
     `padding:${mmToPx(margins.top)}px ${mmToPx(margins.right)}px ` +
     `${mmToPx(margins.bottom)}px ${mmToPx(margins.left)}px;position:relative;overflow:hidden;">` +
@@ -495,6 +507,127 @@ export function fetchAsDataUrl(url: string, timeoutMs = 10000): Promise<string |
   return task;
 }
 
+/** Fetch a same-or-CORS-enabled Stylesheet as text. Null on any failure. */
+export async function fetchStylesheetText(url: string, timeoutMs = 10000): Promise<string | null> {
+  const absolute = url.startsWith("//") ? `${window.location.protocol}${url}` : url;
+  try {
+    const ctrl = new AbortController();
+    const timer = window.setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(absolute, { mode: "cors", signal: ctrl.signal });
+      if (!res.ok) return null;
+      return await res.text();
+    } finally {
+      window.clearTimeout(timer);
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Inline remote font/image `url(…)` references inside a CSS string to `data:`
+ * URLs when fetchable. Relative URLs resolve against `baseUrl` (the
+ * stylesheet's own URL); absolute `http(s)` URLs are fetched directly.
+ * Unfetchable URLs are left untouched.
+ */
+export async function inlineCssUrls(css: string, baseUrl?: string): Promise<string> {
+  const canResolveBase = !!baseUrl && /^https?:\/\//i.test(baseUrl);
+  const absoluteFor = (raw: string): string | null => {
+    const u = raw.trim();
+    if (!u || u.startsWith("data:") || u.startsWith("#") || u.startsWith("blob:")) return null;
+    if (isRemoteUrl(u)) return u.startsWith("//") ? `${window.location.protocol}${u}` : u;
+    if (canResolveBase) {
+      try {
+        return new URL(u, baseUrl).href;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  };
+  const targets = new Set<string>();
+  for (const m of css.matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi)) {
+    const abs = absoluteFor(m[1]);
+    if (abs) targets.add(abs);
+  }
+  if (targets.size === 0) return css;
+  const mapping = new Map<string, string>();
+  await Promise.all(
+    [...targets].map(async (u) => {
+      const data = await fetchAsDataUrl(u);
+      if (data) mapping.set(u, data);
+    }),
+  );
+  if (mapping.size === 0) return css;
+  // Single rewrite pass: match by absolute URL so both absolute spellings
+  // and base-relative spellings (`../fonts/x.woff2`) are replaced.
+  return css.replace(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi, (whole, raw: string) => {
+    const abs = absoluteFor(String(raw));
+    const data = abs ? mapping.get(abs) : undefined;
+    return data ? `url("${data}")` : whole;
+  });
+}
+
+/**
+ * Fetch remote linked stylesheets (Google Fonts, CDN CSS), inline their
+ * font/image URLs, and fold them into `styles`. Sheets that fail to fetch
+ * stay in `links` so the `<link>` re-injection path still tries them live.
+ * This is the CORS bypass for webfonts: fonts.gstatic.com serves
+ * `Access-Control-Allow-Origin: *`, so `fetch` succeeds where canvas use
+ * would taint — the inlined `data:` fonts then rasterize offline-safe.
+ */
+export async function inlineExternalStylesheets(page: RenderInput): Promise<RenderInput> {
+  const links = page.links ?? [];
+  const remote = links.filter((h) => isRemoteUrl(h));
+  if (remote.length === 0) return page;
+  let styles = page.styles;
+  const kept: string[] = [];
+  for (const href of links) {
+    if (!isRemoteUrl(href)) {
+      // Relative stylesheet: no base to resolve against after a text upload.
+      kept.push(href);
+      continue;
+    }
+    const absolute = href.startsWith("//") ? `${window.location.protocol}${href}` : href;
+    const text = await fetchStylesheetText(absolute);
+    if (text === null) {
+      kept.push(href);
+      continue;
+    }
+    styles += `\n/* inlined ${href} */\n${await inlineCssUrls(text, absolute)}`;
+  }
+  return { ...page, styles, links: kept };
+}
+
+/** Basename of a URL/path, ignoring query/hash and Windows separators. */
+function assetBasename(ref: string): string {
+  return ref.split(/[?#]/)[0].split(/[/\\]/).pop()!.trim().toLowerCase();
+}
+
+/**
+ * Bake locally-picked font files into an HTML source string: every `url(…)`
+ * whose basename matches one of `files` (e.g. `url("_fonts/NotoSerif.ttf")`
+ * vs `NotoSerif.ttf`) is replaced with the file's `data:` URL. Matching is
+ * case-insensitive. Returns the rewritten source plus the match count.
+ */
+export function embedFontsInSource(
+  source: string,
+  files: { name: string; dataUrl: string }[],
+): { source: string; matched: number } {
+  const byBase = new Map(files.map((f) => [assetBasename(f.name), f.dataUrl]));
+  let matched = 0;
+  const out = source.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (whole, _quote: string, raw: string) => {
+    const ref = raw.trim();
+    if (ref.startsWith("data:")) return whole;
+    const data = byBase.get(assetBasename(ref));
+    if (!data) return whole;
+    matched += 1;
+    return `url("${data}")`;
+  });
+  return { source: out, matched };
+}
+
 /**
  * Rewrite remote `http(s)` image URLs in the page HTML/CSS to `data:` URLs
  * when they are fetchable (CORS-enabled). Best effort: unfetchable URLs are
@@ -518,19 +651,19 @@ export async function inlineExternalAssets(page: RenderInput): Promise<RenderInp
   for (const m of page.styles.matchAll(/url\(\s*['"]?((?:https?:)?\/\/[^'")]+)['"]?\s*\)/gi)) {
     if (!m[1].startsWith("data:")) urls.add(m[1]);
   }
-  if (urls.size === 0) return page;
+  if (urls.size === 0) return inlineExternalStylesheets(page);
   const entries = await Promise.all(
     [...urls].map(async (u) => [u, await fetchAsDataUrl(u)] as const),
   );
   const mapping = new Map(entries.filter(([, v]) => v).map(([k, v]) => [k, v as string]));
-  if (mapping.size === 0) return page;
+  if (mapping.size === 0) return inlineExternalStylesheets(page);
   let html = page.html;
   let styles = page.styles;
   for (const [from, to] of mapping) {
     html = html.split(from).join(to);
     styles = styles.split(from).join(to);
   }
-  return { ...page, html, styles };
+  return inlineExternalStylesheets({ ...page, html, styles });
 }
 
 /**
@@ -578,7 +711,7 @@ export function measureOverflow(
   total: number,
 ): { overflows: boolean; contentPx: number; usablePx: number } {
   const dims = pageDimsPx(settings.pageSize);
-  const margins = effectiveMargins(settings);
+  const margins = effectiveMargins(settings, page.styles);
   const usablePx =
     dims.height - Math.round(mmToPx(margins.top) + mmToPx(margins.bottom));
   const holder = buildRenderHolder(page, settings, pageIndex, total);
@@ -620,7 +753,7 @@ export async function measureOverflowAsync(
   timeoutMs = 5000,
 ): Promise<{ overflows: boolean; contentPx: number; usablePx: number }> {
   const dims = pageDimsPx(settings.pageSize);
-  const margins = effectiveMargins(settings);
+  const margins = effectiveMargins(settings, page.styles);
   const usablePx =
     dims.height - Math.round(mmToPx(margins.top) + mmToPx(margins.bottom));
   const holder = buildRenderHolder(page, settings, pageIndex, total);
@@ -654,6 +787,31 @@ export interface ExternalRefs {
   images: string[];
   stylesheets: number;
   fontFaces: number;
+  /**
+   * Non-remote font URLs from `@font-face src` (relative paths like
+   * `_fonts/NotoSerif-Regular.ttf`, `C:\Windows\…`, `file:`). An uploaded
+   * file is read as text, so the browser can never resolve sibling font
+   * files — these always need inlining (see `embedFontsInSource`).
+   */
+  localFonts: string[];
+}
+
+/** True for values that can never resolve after a text upload (not remote, not inline). */
+function isLocalAssetUrl(url: string): boolean {
+  const u = url.trim();
+  if (!u || u.startsWith("data:") || u.startsWith("#") || u.startsWith("blob:")) return false;
+  return !isRemoteUrl(u);
+}
+
+/** Collect `@font-face` font-file URLs that are local (see `localFonts`). */
+export function collectLocalFontUrls(styles: string): string[] {
+  const found = new Set<string>();
+  for (const face of styles.matchAll(/@font-face\s*\{[^}]*\}/gi)) {
+    for (const m of face[0].matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi)) {
+      if (isLocalAssetUrl(m[1])) found.add(m[1].trim());
+    }
+  }
+  return [...found];
 }
 
 /** Collect external URLs for CORS warnings (http/https/img/font/@import). */
@@ -690,19 +848,28 @@ export function collectExternalRefs(page: RenderInput): ExternalRefs {
     .filter((h) => h.length > 0);
   const stylesheets = new Set([...linkHrefs, ...embeddedLinks]).size;
   const fontFaces = (page.styles.match(/@font-face/gi) ?? []).length;
-  return { images: [...images], stylesheets, fontFaces };
+  return { images: [...images], stylesheets, fontFaces, localFonts: collectLocalFontUrls(page.styles) };
 }
 
 /** Merge refs across all pages so the warning never depends on page 1 alone. */
 export function collectExternalRefsForPages(pages: RenderInput[]): ExternalRefs {
   const images = new Set<string>();
+  const localFonts = new Set<string>();
   let stylesheets = 0;
   let fontFaces = 0;
   const seenSheets = new Set<string>();
+  // Every page shares the same uploaded `<style>` text, so @font-face rules
+  // must be counted once per distinct stylesheet — summing per page
+  // multiplied the count by the page count (6 faces × 23 pages = "138").
+  const seenStyles = new Set<string>();
   for (const page of pages) {
     const refs = collectExternalRefs(page);
     refs.images.forEach((u) => images.add(u));
-    fontFaces += refs.fontFaces;
+    refs.localFonts.forEach((u) => localFonts.add(u));
+    if (!seenStyles.has(page.styles)) {
+      seenStyles.add(page.styles);
+      fontFaces += refs.fontFaces;
+    }
     // Stylesheet <link> hrefs are usually shared — count distinct URLs once.
     (page.links ?? []).forEach((h) => {
       if (h && !seenSheets.has(h)) {
@@ -715,19 +882,37 @@ export function collectExternalRefsForPages(pages: RenderInput[]): ExternalRefs 
       stylesheets += refs.stylesheets;
     }
   }
-  return { images: [...images], stylesheets, fontFaces };
+  return { images: [...images], stylesheets, fontFaces, localFonts: [...localFonts] };
 }
 
 export function corsWarning(refs: ExternalRefs): string | null {
-  if (refs.images.length === 0 && refs.stylesheets === 0 && refs.fontFaces === 0)
+  if (
+    refs.images.length === 0 &&
+    refs.stylesheets === 0 &&
+    refs.fontFaces === 0 &&
+    refs.localFonts.length === 0
+  )
     return null;
   const bits: string[] = [];
   if (refs.images.length > 0) bits.push(`${refs.images.length} external image(s)`);
   if (refs.stylesheets > 0) bits.push(`${refs.stylesheets} external stylesheet(s)`);
   if (refs.fontFaces > 0) bits.push(`${refs.fontFaces} webfont(s)`);
-  return (
-    `${bits.join(", ")} detected — html2canvas needs CORS-enabled URLs ` +
-    `(Access-Control-Allow-Origin). If images/fonts render blank in preview or PDF, ` +
-    `inline them as data: URLs or self-host them.`
-  );
+  if (refs.localFonts.length > 0)
+    bits.push(`${refs.localFonts.length} local font file(s) (${refs.localFonts.slice(0, 2).join(", ")}${refs.localFonts.length > 2 ? ", …" : ""})`);
+  const head = `${bits.join(", ")} detected.`;
+  const remedies: string[] = [];
+  if (refs.localFonts.length > 0) {
+    remedies.push(
+      `Local font files can't load from uploaded text (the browser never sees sibling files) — attach them with “Attach fonts”, or bake them in: python3 scripts/inline-local-fonts.py guide.html.`,
+    );
+  }
+  if (refs.images.length > 0 || refs.stylesheets > 0) {
+    remedies.push(
+      `html2canvas needs CORS-enabled URLs (Access-Control-Allow-Origin); ` +
+        `the tool auto-inlines fetchable remote images, fonts and stylesheets, but anything left blank must be inlined as data: URLs or self-hosted`,
+    );
+  } else if (refs.fontFaces > 0) {
+    remedies.push(`if text falls back to system fonts, inline the webfonts as data: URLs`);
+  }
+  return `${head} ${remedies.join(" ")}`.trim();
 }

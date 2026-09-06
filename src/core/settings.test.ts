@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   clampSettings,
   DEFAULT_SETTINGS,
+  detectPageSize,
   dpiToScale,
   effectiveMargins,
+  extractPagePadding,
   mmToPx,
   pageDimsPx,
 } from "./settings";
@@ -49,6 +51,66 @@ describe("effectiveMargins", () => {
     expect(out).toEqual(custom);
     expect(out).not.toBe(custom);
   });
+
+  it("reuses .page padding in html mode (v7_fixed.html regression)", () => {
+    const css = `.page{width:612pt;height:792pt;padding:48pt 51pt 54pt 51pt;}`;
+    const out = effectiveMargins({ ...DEFAULT_SETTINGS, marginMode: "html" }, css);
+    // 48pt→16.93mm, 51pt→17.99mm, 54pt→19.05mm
+    expect(out.top).toBeCloseTo(16.933, 2);
+    expect(out.right).toBeCloseTo(17.99, 2);
+    expect(out.bottom).toBeCloseTo(19.05, 2);
+    expect(out.left).toBeCloseTo(17.99, 2);
+  });
+
+  it("falls back to the uniform margin when the file has no .page padding", () => {
+    const out = effectiveMargins({ ...DEFAULT_SETTINGS, marginMode: "html", marginMm: 12 }, "h1{color:red;}");
+    expect(out).toEqual({ top: 12, right: 12, bottom: 12, left: 12 });
+  });
+});
+
+describe("extractPagePadding", () => {
+  it("expands 1/2/3-value shorthands", () => {
+    expect(extractPagePadding(".page{padding:10mm;}")).toEqual({ top: 10, right: 10, bottom: 10, left: 10 });
+    expect(extractPagePadding(".page{padding:10mm 20mm;}")).toEqual({ top: 10, right: 20, bottom: 10, left: 20 });
+    expect(extractPagePadding(".page{padding:1mm 2mm 3mm;}")).toEqual({ top: 1, right: 2, bottom: 3, left: 2 });
+  });
+
+  it("converts pt/px/in to mm and lets longhands override", () => {
+    const out = extractPagePadding(".page{padding:72pt;padding-left:25.4mm;}");
+    expect(out?.top).toBeCloseTo(25.4, 6);
+    expect(out?.left).toBeCloseTo(25.4, 6);
+  });
+
+  it("last .page rule wins and @media overrides are ignored", () => {
+    const css =
+      ".page{padding:10mm;}" +
+      ".page{padding:20mm;}" +
+      "@media screen{.page{padding:1mm;margin:18pt auto;}}";
+    expect(extractPagePadding(css)).toEqual({ top: 20, right: 20, bottom: 20, left: 20 });
+  });
+
+  it("returns null when there is no usable padding", () => {
+    expect(extractPagePadding("h1{color:red;}")).toBeNull();
+    expect(extractPagePadding(".page{color:red;}")).toBeNull();
+    expect(extractPagePadding(".page{padding:10%;}")).toBeNull();
+  });
+});
+
+describe("detectPageSize", () => {
+  it("reads @page size tokens", () => {
+    expect(detectPageSize("@page{size:Letter;margin:0;}")).toBe("letter");
+    expect(detectPageSize("@page{size:A4;}")).toBe("a4");
+  });
+
+  it("matches .page Letter/A4 geometry", () => {
+    expect(detectPageSize(".page{width:612pt;height:792pt;}")).toBe("letter");
+    expect(detectPageSize(".page{width:210mm;height:297mm;}")).toBe("a4");
+  });
+
+  it("returns null when nothing conclusive is declared", () => {
+    expect(detectPageSize("h1{color:red;}")).toBeNull();
+    expect(detectPageSize(".page{width:100%;}")).toBeNull();
+  });
 });
 
 describe("dpiToScale", () => {
@@ -83,5 +145,12 @@ describe("clampSettings", () => {
 
   it("floors the start page number", () => {
     expect(clampSettings({ ...DEFAULT_SETTINGS, startPageNumber: 2.9 }).startPageNumber).toBe(2);
+  });
+
+  it("resets unknown margin modes to uniform", () => {
+    expect(
+      clampSettings({ ...DEFAULT_SETTINGS, marginMode: "bogus" as never }).marginMode,
+    ).toBe("uniform");
+    expect(clampSettings({ ...DEFAULT_SETTINGS, marginMode: "html" }).marginMode).toBe("html");
   });
 });

@@ -10,7 +10,8 @@ import { buildPageSrcDoc, effectiveMargins, pageNumberText, parseHtmlPages, type
 import { generatePdf } from "./core/pdf";
 import { deserializeProject, projectFilename, serializeProject } from "./core/project";
 import { SAMPLES } from "./core/samples";
-import { clampSettings, DEFAULT_SETTINGS, type PdfSettings } from "./core/settings";
+import { clampSettings, DEFAULT_SETTINGS, detectPageSize, extractPagePadding, type PdfSettings } from "./core/settings";
+import { collectExternalRefsForPages, embedFontsInSource } from "./core/render";
 import {
   addRecentFile,
   clearRecentFiles,
@@ -58,7 +59,7 @@ export default function App() {
 
   const { renders, corsNotice, rendering } = usePageRenders(doc, settings);
 
-  const applySource = (nextSource: string, nextFilename: string) => {
+  const applySource = (nextSource: string, nextFilename: string, adoptDesign = true) => {
     try {
       const parsed = parseHtmlPages(nextSource);
       if (parsed.pages.length === 0) {
@@ -73,6 +74,22 @@ export default function App() {
       setSource(nextSource);
       setFilename(nextFilename);
       setExpanded(null);
+      // Reuse the file's own print design: page size (@page/.page geometry)
+      // and margins (.page padding) become the defaults; the user can still
+      // override everything in General settings afterwards.
+      if (adoptDesign) {
+        const size = detectPageSize(parsed.styles);
+        const padding = extractPagePadding(parsed.styles);
+        if (size || padding) {
+          setSettings((prev) =>
+            clampSettings({
+              ...prev,
+              ...(size ? { pageSize: size } : null),
+              ...(padding ? { marginMode: "html" as const } : null),
+            }),
+          );
+        }
+      }
       setRecents(
         addRecentFile({
           name: nextFilename,
@@ -144,22 +161,79 @@ export default function App() {
     downloadText(serializeProject(source, filename, settings), projectFilename(filename), "application/json");
   };
 
+  const onAttachFonts = async (files: FileList | null) => {
+    if (!files || files.length === 0 || !source) return;
+    try {
+      const entries = await Promise.all(
+        Array.from(files).map(
+          (f) =>
+            new Promise<{ name: string; dataUrl: string }>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () =>
+                typeof reader.result === "string"
+                  ? resolve({ name: f.name, dataUrl: reader.result })
+                  : reject(new Error(`Could not read ${f.name}.`));
+              reader.onerror = () => reject(new Error(`Could not read ${f.name}.`));
+              reader.readAsDataURL(f);
+            }),
+        ),
+      );
+      const { source: embedded, matched } = embedFontsInSource(source, entries);
+      if (matched === 0) {
+        setError(
+          `None of the ${entries.length} font file(s) match a url(…) in ${filename}. ` +
+            `Filenames must match the referenced basename (e.g. NotoSerif-Regular.ttf for url("_fonts/NotoSerif-Regular.ttf")).`,
+        );
+        return;
+      }
+      setError(null);
+      // Keep the user's current settings — only the font bytes change.
+      applySource(embedded, filename, false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to embed fonts.");
+    }
+  };
+
   const onLoadProjectFile = async (file: File) => {
     try {
       const loaded = deserializeProject(await file.text());
       setSettings(clampSettings(loaded.settings));
-      applySource(loaded.source, loaded.filename);
+      // The project carries its own settings — don't re-adopt the HTML design.
+      applySource(loaded.source, loaded.filename, false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load project.");
     }
   };
 
   // Crisp vector fallback for the expanded modal (same margins/numbers as raster).
+  const localFontCount = useMemo(() => {
+    if (!doc) return 0;
+    return collectExternalRefsForPages(
+      doc.pages.map((p) => ({ html: p.html, styles: doc.styles, links: doc.links })),
+    ).localFonts.length;
+  }, [doc]);
+
+  const htmlDesignNote = useMemo(() => {
+    if (!doc) return null;
+    const notes: string[] = [];
+    if (settings.marginMode === "html") {
+      const pad = extractPagePadding(doc.styles);
+      if (pad) {
+        const fmt = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
+        notes.push(
+          `margins from HTML (.page padding → ${fmt(pad.top)}/${fmt(pad.right)}/${fmt(pad.bottom)}/${fmt(pad.left)} mm)`,
+        );
+      }
+    }
+    if (notes.length === 0) return null;
+    return `Using ${notes.join(" + ")} — override anytime in General settings.`;
+  }, [doc, settings.marginMode]);
+
   const expandedSrcDoc = useMemo(() => {
     if (!doc || expanded === null || !doc.pages[expanded]) return null;
     const s = clampSettings(settings);
     return buildPageSrcDoc(doc.pages[expanded], doc.styles, {
-      marginsMm: effectiveMargins(s),
+      marginsMm: effectiveMargins(s, doc.styles),
       pageNumberText: pageNumberText(
         s.showPageNumbers,
         s.startPageNumber,
@@ -236,9 +310,34 @@ export default function App() {
                 {error}
               </div>
             )}
+            {htmlDesignNote && (
+              <div className="border border-sky-300 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                {htmlDesignNote}
+              </div>
+            )}
             {corsNotice && (
               <div className="border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                {corsNotice}
+                <p>{corsNotice}</p>
+                {localFontCount > 0 && (
+                  <p className="mt-2">
+                    <label className="cursor-pointer font-medium text-amber-900 underline hover:text-amber-950 focus-visible:outline-2 focus-visible:outline-indigo-600">
+                      Attach font files…
+                      <input
+                        type="file"
+                        accept=".ttf,.otf,.woff,.woff2,.eot"
+                        multiple
+                        className="hidden"
+                        aria-label="Attach local font files to embed them"
+                        onChange={(e) => {
+                          void onAttachFonts(e.target.files);
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>{" "}
+                    — pick the .ttf/.otf/.woff2 files the HTML references and they are
+                    baked in as data: URLs (stays in this browser session).
+                  </p>
+                )}
               </div>
             )}
             {overflowCount > 0 && (
@@ -252,7 +351,7 @@ export default function App() {
           <PreviewGrid renders={renders} onExpand={setExpanded} pageSize={settings.pageSize} />
         </section>
         <aside className="min-w-0 space-y-4" aria-label="Settings and project">
-          <SettingsPanel settings={settings} onChange={setSettings} />
+          <SettingsPanel settings={settings} onChange={setSettings} htmlStyles={doc?.styles} />
           <ProjectBar
             hasDoc={!!source}
             lastSavedAt={lastSavedAt}

@@ -1,4 +1,4 @@
-import { extractPrintCss, REVEAL_OVERRIDE, scopeCss, SEEN_CLASSES } from "./render";
+import { extractPrintCss, REVEAL_OVERRIDE, scopeCss, SEEN_CLASSES, SHELL_RESET } from "./render";
 import { effectiveMargins, type NumberPosition, type PageSize } from "./settings";
 
 export interface ParsedPage {
@@ -84,6 +84,7 @@ padding:${opts.marginsMm.top}mm ${opts.marginsMm.right}mm ${opts.marginsMm.botto
 .page-number{position:absolute;left:0;right:0;bottom:6mm;text-align:${align};font-size:11px;color:#64748b;}
 ${scoped}
 ${hoistedPrint}
+${SHELL_RESET}
 ${REVEAL_OVERRIDE}
 </style></head><body><div class="pdf-scope ${SEEN_CLASSES}"><div class="page ${SEEN_CLASSES}">${page.html}</div>${
     opts.pageNumberText
