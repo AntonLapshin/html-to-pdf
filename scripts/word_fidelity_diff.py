@@ -39,15 +39,18 @@ def source_text(path: str) -> str:
 
 
 def words(text: str) -> Counter:
-    return Counter(re.findall(r"[a-zA-Z0-9'’\-–—•]+", text))
+    return Counter(re.findall(r"[a-z0-9'’\-–—•]+", text.lower()))
 
 
 def normalize(text: str, drop: str) -> str:
     text = re.sub(r"[—–]\s*\d+\s*[—–]", "", text)  # "— N —" numbers
     text = re.sub(r"\b\d+\s*/\s*\d+\b", "", text)  # "N / total" numbers
+    # Letter-spaced uppercase (text-transform + letter-spacing renders as
+    # "T H E" in pdftotext): collapse single-cap runs before lowercasing.
+    text = re.sub(r"\b([A-Z]) (?=[A-Z]\b)", r"\1", text)
     text = re.sub(r"D AY (\d)", r"DAY \1", text)    # letter-spaced kickers
     if drop:
-        text = re.sub(drop, "", text)
+        text = re.sub(drop, "", text, flags=re.I)
     return re.sub(r"\s+", " ", text)
 
 

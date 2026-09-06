@@ -109,7 +109,18 @@ Options (all optional, defaults mirror the app's `DEFAULT_SETTINGS`):
 ./scripts/render.sh guide.html out/guide.pdf --page-size letter --margin 12 --no-numbers
 ./scripts/render.sh guide.html --number-format dash --number-position bottom-right --start 3
 ./scripts/render.sh guide.html --margin-top 12 --margin-bottom 14
+./scripts/render.sh guide.html --layout sheet --numbers  # force sheet/content handling
+./scripts/render.sh guide.html --extra-css scripts/compat/guide_30.css
 ```
+
+Two layouts: `content` (default for fluid samples — supplied 10mm geometry
++ `N / total` numbers) vs `sheet` (auto-detected when `.page` is sized to
+a full sheet or the file has its own `@page { margin: 0 }`: margins stay 0
+and injected numbers switch off because sheets carry their own footers —
+forcing content geometry there overflows every sheet into blank spill
+pages and double-numbers them). `--extra-css` appends an override file
+last in the cascade for WeasyPrint workarounds; `scripts/compat/`
+collects them per document.
 
 Technique: `render.py` injects a print block before rendering — `@page`
 carries size/margin/background (a `body` background leaves pages white),
@@ -137,8 +148,15 @@ PNGs are the pixel-comparison input. Short samples legitimately flag
 `UNDERFILLED` — that heuristic is tuned for full guide pages.
 
 Gotchas: grid layout is shaky in WeasyPrint and `float` drop-caps crash it
-(keep initials inline); Playwright/Chromium print-to-PDF is the fallback
-if a design ever needs those.
+(the script auto-neutralizes `float` on `::first-letter`; `guide_30.html`
+additionally needed its 2-column timeline grids swapped to flex via
+`scripts/compat/guide_30.css` — grid silently dropped trailing rows).
+Playwright/Chromium print-to-PDF is the fallback if a design ever needs
+those. The word diff normalizes case and letter-spaced caps, but wide
+tracking still scrambles some tokens (expect fragments around kickers /
+colophon) and CSS-generated content (list discs, `::before` dashes,
+`decimal-leading-zero` counters, the file's own folios) legitimately shows
+as ADDED — classify the residual rather than chasing zero.
 
 ## Troubleshooting
 

@@ -1,0 +1,14 @@
+/* Compat for guide_30.html ("The Cozy Hours") under WeasyPrint.
+ *
+ * Timeline rows use a 2-column grid (.tl-item { display: grid;
+ * grid-template-columns: 17mm 1fr }). WeasyPrint's grid support drops
+ * trailing rows instead of fragmenting them: the morning timeline lost
+ * 0:10–1:00 and the evening timeline lost 21:45/22:00 (caught by
+ * scripts/word_fidelity_diff.py as MISSING words). A flex row is visually
+ * identical here (fixed gutter + fluid body) and fragments correctly.
+ * Other grids in the file (.pillars, .rooms, .checks, .howto, ...) render
+ * fine and are intentionally left untouched.
+ */
+.tl-item { display: flex !important; }
+.tl-item > .tl-time { flex: 0 0 17mm !important; }
+.tl-item > div:last-child { flex: 1 !important; min-width: 0; }
