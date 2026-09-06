@@ -28,7 +28,7 @@ export function ShowcaseGallery() {
   const Selected = active && variant ? active.showcases[variant] : undefined;
 
   return (
-    <div className="showcase-local mx-auto grid max-w-7xl grid-cols-[240px_1fr] gap-4 p-6">
+    <div className="showcase-local mx-auto grid max-w-7xl grid-cols-1 gap-4 p-4 sm:p-6 md:grid-cols-[240px_1fr]">
       <aside className="space-y-2 bg-white p-3 ring-1 ring-slate-200">
         <a href={import.meta.env.BASE_URL} className="text-sm text-indigo-600">
           ← Back to app

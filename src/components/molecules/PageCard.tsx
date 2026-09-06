@@ -13,7 +13,8 @@ export function PageCard({ index, previewUrl, status, overflow, onExpand }: Prop
   return (
     <button
       onClick={onExpand}
-      className="group relative overflow-hidden bg-white text-left shadow-sm ring-1 ring-slate-200 transition hover:ring-indigo-400"
+      aria-label={`Expand page ${index + 1} preview${overflow ? " (content overflows the page)" : ""}`}
+      className="group relative block w-full overflow-hidden bg-white text-left shadow-sm ring-1 ring-slate-200 transition hover:ring-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
       title={`Expand page ${index + 1}`}
     >
       <div className="relative aspect-[210/297] w-full bg-white">

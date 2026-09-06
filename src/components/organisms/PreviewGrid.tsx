@@ -17,16 +17,21 @@ export function PreviewGrid({
     );
   }
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
+    <div
+      role="list"
+      aria-label="PDF page previews. Activate a page to expand it."
+      className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+    >
       {renders.map((r, i) => (
-        <PageCard
-          key={i}
-          index={i}
-          previewUrl={r.previewUrl}
-          status={r.status}
-          overflow={r.overflow}
-          onExpand={() => onExpand(i)}
-        />
+        <div key={i} role="listitem" className="min-w-0">
+          <PageCard
+            index={i}
+            previewUrl={r.previewUrl}
+            status={r.status}
+            overflow={r.overflow}
+            onExpand={() => onExpand(i)}
+          />
+        </div>
       ))}
     </div>
   );

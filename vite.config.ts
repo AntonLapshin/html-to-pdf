@@ -1,6 +1,6 @@
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 
 // https://vite.dev/config/
 // base "/html-to-pdf/" keeps assets working under GitHub Pages project site.
@@ -14,5 +14,9 @@ export default defineConfig({
   preview: {
     host: '0.0.0.0',
     port: 4173,
+  },
+  test: {
+    environment: 'jsdom',
+    include: ['src/**/*.test.ts'],
   },
 })

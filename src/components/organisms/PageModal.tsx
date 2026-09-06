@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PageRender } from "../../ui/usePageRenders";
 import { Button } from "../atoms/Button";
 import { Slider } from "../atoms/Slider";
 
+const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
 /**
  * Organism: expanded page view. Zoom 50–200%, keyboard ←/→/Esc,
- * thumbnail strip, per-page render status. Shows the same canvas raster
- * as the grid (preview pixels == PDF pixels); falls back to a crisp
- * vector iframe when `srcDoc` is provided.
+ * thumbnail strip, per-page render status, focus trap while open.
+ * Shows the same canvas raster as the grid (preview pixels == PDF
+ * pixels); falls back to a crisp vector iframe when `srcDoc` is provided.
  */
 export function PageModal({
   index,
@@ -25,6 +27,8 @@ export function PageModal({
   const total = renders.length;
   const [zoom, setZoom] = useState(100);
   const current = renders[index];
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocus = useRef<Element | null>(null);
 
   const onPrev = useCallback(() => {
     if (index > 0) onSelect(index - 1);
@@ -43,18 +47,51 @@ export function PageModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, onPrev, onNext]);
 
-  // Focus trap-lite: focus the dialog on mount for keyboard users.
+  // Focus trap: remember opener, focus the dialog, cycle Tab inside, restore on close.
   useEffect(() => {
-    document.getElementById("page-modal-dialog")?.focus();
+    previousFocus.current = document.activeElement;
+    dialogRef.current?.focus();
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const onTab = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const items = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+        (el) => !el.hasAttribute("disabled"),
+      );
+      if (items.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    dialog.addEventListener("keydown", onTab);
+    return () => {
+      dialog.removeEventListener("keydown", onTab);
+      if (previousFocus.current instanceof HTMLElement) previousFocus.current.focus();
+    };
+  }, []);
+
+  // Re-focus the dialog when the page changes so ←/→ keep working for keyboard users.
+  useEffect(() => {
+    dialogRef.current?.focus();
   }, [index]);
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-2 sm:p-4"
       onClick={onClose}
       role="presentation"
     >
       <div
+        ref={dialogRef}
         id="page-modal-dialog"
         tabIndex={-1}
         role="dialog"
@@ -124,13 +161,16 @@ export function PageModal({
             )}
           </div>
         </div>
-        <div className="flex gap-2 overflow-x-auto border-t border-slate-200 bg-white px-4 py-2">
+        <div className="flex gap-2 overflow-x-auto border-t border-slate-200 bg-white px-4 py-2" role="listbox" aria-label="Pages">
           {renders.map((r, i) => (
             <button
               key={i}
+              role="option"
+              aria-selected={i === index}
+              aria-label={`Go to page ${i + 1} (${r.status})`}
               onClick={() => onSelect(i)}
               title={`Go to page ${i + 1} (${r.status})`}
-              className={`relative h-16 w-11 shrink-0 overflow-hidden ring-2 ${
+              className={`relative h-16 w-11 shrink-0 overflow-hidden ring-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 ${
                 i === index ? "ring-indigo-600" : "ring-slate-200 hover:ring-indigo-300"
               }`}
             >
