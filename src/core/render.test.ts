@@ -6,6 +6,7 @@ import {
   collectExternalRefs,
   collectExternalRefsForPages,
   corsWarning,
+  extractPageBackground,
   extractPrintCss,
   inlineExternalAssets,
   measureOverflow,
@@ -114,6 +115,35 @@ describe("numberOverlayStyle", () => {
   });
 });
 
+describe("extractPageBackground (v7_fixed.html regression)", () => {
+  // v7's pages are creamy (`background: #FBF8F2`) but the raster holder used
+  // to force `#fff` inline, bleaching previews + PDF white.
+  it("reads a flat .page background color", () => {
+    expect(extractPageBackground(".page{background:#FBF8F2;}")).toBe("#FBF8F2");
+    expect(
+      extractPageBackground(".page{width:100%;background: #FBF8F2;\n padding:0;}"),
+    ).toBe("#FBF8F2");
+    expect(extractPageBackground(".page{background-color:rgb(251,248,242);}")).toBe(
+      "rgb(251,248,242)",
+    );
+  });
+
+  it("last .page rule wins and non-page rules are ignored", () => {
+    expect(
+      extractPageBackground(".page{background:#fff;}.x{background:#000;}.page{background:#111;}"),
+    ).toBe("#111");
+    expect(extractPageBackground("h1{background:#000;}")).toBeNull();
+  });
+
+  it("returns null for gradients, urls and missing backgrounds", () => {
+    expect(extractPageBackground(".page{color:#000;}")).toBeNull();
+    expect(
+      extractPageBackground(".page{background:linear-gradient(#fff,#000);}"),
+    ).toBeNull();
+    expect(extractPageBackground(".page{background:url(a.png) #fff;}")).toBeNull();
+  });
+});
+
 describe("buildRenderHolder", () => {
   it("builds a fixed-size holder with scoped css and number overlay", () => {
     const holder = buildRenderHolder(
@@ -136,6 +166,25 @@ describe("buildRenderHolder", () => {
       1,
     );
     expect(holder.innerHTML).not.toContain("page-number");
+  });
+
+  it("keeps the author's .page background instead of forcing white", () => {
+    const holder = buildRenderHolder(
+      { html: "<p>x</p>", styles: ".page{background:#FBF8F2;}" },
+      DEFAULT_SETTINGS,
+      0,
+      1,
+    );
+    // Paper color follows the author…
+    expect(holder.style.background).toContain("rgb(251, 248, 242)");
+    // …and the scope no longer hard-codes white inline, so authored
+    // backgrounds (flat or gradient) win by source order over the base rule.
+    const scope = holder.querySelector(".pdf-scope") as HTMLElement;
+    expect(scope.style.background).toBe("");
+    const styleText = holder.querySelector("style")?.textContent ?? "";
+    expect(styleText.indexOf(".pdf-scope{background:#fff;}")).toBeLessThan(
+      styleText.indexOf(".pdf-scope{background:#FBF8F2;}"),
+    );
   });
 });
 

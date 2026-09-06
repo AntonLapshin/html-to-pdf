@@ -127,6 +127,13 @@ under a minute; docs let a new user reproduce it; CI green; repo public at
 - `html2canvas` supports most CSS but not everything (blend modes, some
   modern selectors) → alternative `html-to-image` (foreignObject SVG) kept
   as fallback; decision logged in Phase 2.
+- Raster engine (decided, Phase 2): `html-to-image` (SVG foreignObject, native
+  browser paint) is the primary `renderPageCanvas` path — text and inline-block
+  boxes (checkboxes) share one paint pass, so they can't drift apart, and the
+  author's `.page` background survives (see `extractPageBackground`). `html2canvas`
+  stays as the automatic fallback (tainted canvas, SVG-hostile markup, hanging
+  font hosts). Rationale: html2canvas paints text and boxes on divergent paths
+  (≈3.7px checkbox lift on v7) and forced `#fff` bleached designed pages white.
 - Uploaded HTML may include Tailwind classes without Tailwind loaded →
   Phase 2 inlines a Tailwind browser build or instructs agents to use plain
   `<style>` CSS (sample demonstrates the safe path).

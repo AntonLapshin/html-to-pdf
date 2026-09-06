@@ -1,3 +1,4 @@
+import { toCanvas } from "html-to-image";
 import html2canvas from "html2canvas";
 import { pageNumberText } from "./parseHtml";
 import {
@@ -178,6 +179,43 @@ export const REVEAL_OVERRIDE =
  * selectors (scoped to `.pdf-scope.seen …`) keep matching. */
 export const SEEN_CLASSES = "seen visible shown revealed loaded in-view";
 
+/**
+ * Read the author's page background out of uploaded `<style>` CSS.
+ * Looks at `.page` rules (last one wins, like the cascade) for a flat
+ * `background-color` / `background` color. Returns the raw color value
+ * (`#FBF8F2`, `rgb(…)`, named colors) or null when the page has no flat
+ * background (transparent default, gradients, `url(…)` layers).
+ *
+ * Why: the raster holder used to force `background:#fff` inline, which beat
+ * the author's scoped `.page` background and turned every creamy/beige page
+ * white in previews + PDF (the vector modal kept the color, so the two
+ * visibly diverged). The holder now defaults to this color instead.
+ */
+export function extractPageBackground(css: string): string | null {
+  const clean = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  let found: string | null = null;
+  // Match ` selector-list { body } ` blocks brace-aware (one nesting level:
+  // enough for plain `.page{…}` rules; at-rules are skipped).
+  const ruleRe = /([^{}@][^{}]*)\{([^{}]*)\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = ruleRe.exec(clean)) !== null) {
+    const parts = m[1].split(",").map((s) => s.trim());
+    const isPageRule = parts.some((sel) => /^\.page(?![\w-])(::?[a-z-]+|\[[^\]]*\])?$/.test(sel));
+    if (!isPageRule) continue;
+    const body = m[2];
+    const bgColor = /(^|;)\s*background-color\s*:\s*([^;!]+)/i.exec(body)?.[2]?.trim();
+    const bgShort = /(^|;)\s*background\s*:\s*([^;!]+)/i.exec(body)?.[2]?.trim();
+    const raw = bgColor ?? bgShort ?? "";
+    if (!raw) continue;
+    if (/url\s*\(|gradient\s*\(|var\s*\(/i.test(raw)) continue;
+    // `background` shorthand may carry repeat/position tokens — accept only a
+    // lone color value.
+    const token = bgColor ? raw : raw.split(/\s+/)[0] ?? "";
+    if (/^(#[0-9a-f]{3,8}|rgba?\([^)]*\)|[a-z]+)$/i.test(token)) found = token;
+  }
+  return found;
+}
+
 export function numberOverlayStyle(position: NumberPosition): string {
   const base =
     "position:absolute;left:0;right:0;font-size:11px;color:#64748b;pointer-events:none;";
@@ -211,12 +249,18 @@ export function buildRenderHolder(
   // Hoisted print rules come after the screen rules so the author's print
   // intent wins; the reveal override comes last as the final safety net.
   const hoistedPrint = scopeCss(extractPrintCss(page.styles), scope);
+  // Author's page background (e.g. v7's creamy `#FBF8F2`): the base rule
+  // below keeps plain pages white, while any authored `.page` background —
+  // flat color, gradient, layered — wins by source order, exactly like the
+  // vector modal (`buildPageSrcDoc`). Forcing `#fff` inline here used to
+  // bleach every designed page white in previews + PDF.
+  const paperBg = extractPageBackground(page.styles) ?? "#ffffff";
   const holder = document.createElement("div");
   holder.style.cssText = [
     `width:${dims.width}px`,
     `height:${dims.height}px`,
     "box-sizing:border-box",
-    "background:#fff",
+    `background:${paperBg}`,
     "overflow:hidden",
     "position:relative",
   ].join(";");
@@ -224,10 +268,10 @@ export function buildRenderHolder(
     (page.links ?? [])
       .map((href) => `<link rel="stylesheet" href="${escapeAttr(href)}" crossorigin="anonymous">`)
       .join("") +
-    `<style>${scoped}\n${hoistedPrint}\n${REVEAL_OVERRIDE}</style>` +
+    `<style>.pdf-scope{background:#fff;}\n${scoped}\n${hoistedPrint}\n${REVEAL_OVERRIDE}</style>` +
     `<div class="${scope.slice(1)} ${SEEN_CLASSES}" style="box-sizing:border-box;width:100%;height:100%;` +
     `padding:${mmToPx(margins.top)}px ${mmToPx(margins.right)}px ` +
-    `${mmToPx(margins.bottom)}px ${mmToPx(margins.left)}px;position:relative;background:#fff;overflow:hidden;">` +
+    `${mmToPx(margins.bottom)}px ${mmToPx(margins.left)}px;position:relative;overflow:hidden;">` +
     `<div class="page ${SEEN_CLASSES}" style="box-sizing:border-box;width:100%;height:100%;overflow:hidden;">${page.html}</div>` +
     (settings.showPageNumbers
       ? `<div class="page-number" style="${numberOverlayStyle(settings.numberPosition)}">` +
@@ -237,7 +281,15 @@ export function buildRenderHolder(
   return holder;
 }
 
-/** Render one page to canvas at settings DPI. Caller owns the canvas. */
+/** Render one page to canvas at settings DPI. Caller owns the canvas.
+ *
+ * Primary engine is `html-to-image` (SVG foreignObject → native browser
+ * paint): text, inline-block boxes (checkboxes), backgrounds and modern CSS
+ * rasterize exactly as laid out, so e.g. a checkbox never drifts off its
+ * text baseline the way html2canvas's split box/text paint paths can.
+ * html2canvas stays as the automatic fallback (tainted canvas, SVG-hostile
+ * markup, blocked font hosts).
+ */
 export async function renderPageCanvas(
   page: RenderInput,
   settings: PdfSettings,
@@ -245,12 +297,60 @@ export async function renderPageCanvas(
   total: number,
 ): Promise<HTMLCanvasElement> {
   // Best effort: inline CORS-fetchable remote images as data: URLs so they
-  // survive html2canvas even when the remote host omits ACAO headers for
+  // survive rasterization even when the remote host omits ACAO headers for
   // canvas use. Failures keep the original URL (warning covers that case).
   const inlined = await inlineExternalAssets(page);
+  const scale = dpiToScale(settings.dpi);
+  try {
+    const holder = buildRenderHolder(inlined, settings, pageIndex, total);
+    // Stage inside a hidden same-origin iframe at a natural (0,0) position:
+    // keeps the main page flicker-free while foreignObject serialization sees
+    // fully laid-out, in-viewport content (far-offscreen inline offsets
+    // serialize into the SVG and rasterize blank).
+    const dims = pageDimsPx(settings.pageSize);
+    const paperBg = extractPageBackground(inlined.styles) ?? "#ffffff";
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.style.cssText = [
+      "position:fixed",
+      "left:-10000px",
+      "top:0",
+      `width:${dims.width}px`,
+      `height:${dims.height}px`,
+      "border:0",
+      `background:${paperBg}`,
+    ].join(";");
+    document.body.appendChild(iframe);
+    try {
+      const frameDoc = iframe.contentDocument;
+      if (!frameDoc) throw new Error("Raster iframe has no document.");
+      frameDoc.open();
+      frameDoc.write(
+        `<!doctype html><html><head><meta charset="utf-8"></head>` +
+          `<body style="margin:0;padding:0;background:${paperBg};"></body></html>`,
+      );
+      frameDoc.close();
+      frameDoc.body.appendChild(holder);
+      // Webfonts + <img> decode asynchronously: rasterizing too early bakes in
+      // fallback fonts / blank images. Wait (bounded) before snapshotting.
+      await waitForHolderAssets(holder, 5000);
+      const canvas = await withTimeout(
+        toCanvas(holder, { pixelRatio: scale, cacheBust: false }),
+        25000,
+      );
+      // Surface a tainted canvas (non-inlinable remote image without CORS)
+      // here so the html2canvas path below still gets its chance.
+      canvas.getContext("2d")?.getImageData(0, 0, 1, 1);
+      return canvas;
+    } finally {
+      document.body.removeChild(iframe);
+    }
+  } catch {
+    // Fall through to html2canvas.
+  }
   const holder = buildRenderHolder(inlined, settings, pageIndex, total);
   const stage = document.createElement("div");
-  stage.style.cssText = "position:fixed;left:-10000px;top:0;background:#fff;";
+  stage.style.cssText = `position:fixed;left:-10000px;top:0;background:${extractPageBackground(inlined.styles) ?? "#ffffff"};`;
   stage.appendChild(holder);
   document.body.appendChild(stage);
   try {
@@ -258,8 +358,8 @@ export async function renderPageCanvas(
     // fallback fonts / blank images. Wait (bounded) before snapshotting.
     await waitForHolderAssets(holder, 5000);
     return await html2canvas(holder, {
-      scale: dpiToScale(settings.dpi),
-      backgroundColor: "#ffffff",
+      scale,
+      backgroundColor: extractPageBackground(inlined.styles) ?? "#ffffff",
       useCORS: true,
       logging: false,
       imageTimeout: 15000,
@@ -267,6 +367,26 @@ export async function renderPageCanvas(
   } finally {
     document.body.removeChild(stage);
   }
+}
+
+/** Reject if `task` takes longer than `timeoutMs` (hanging font hosts). */
+function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(
+      () => reject(new Error(`Raster timed out after ${timeoutMs}ms.`)),
+      timeoutMs,
+    );
+    task.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
 }
 
 /**
@@ -277,18 +397,22 @@ export async function renderPageCanvas(
  * Everything races against `timeoutMs` so a hanging host can't stall export.
  */
 export async function waitForHolderAssets(holder: HTMLElement, timeoutMs = 5000): Promise<void> {
+  // Resolve APIs against the holder's own document: raster holders may live
+  // in a hidden staging iframe, whose fonts/images belong to that document.
+  const holderDoc = holder.ownerDocument ?? document;
+  const holderWin = holderDoc.defaultView ?? window;
   const timeout = new Promise<void>((resolve) => {
-    window.setTimeout(resolve, Math.max(0, timeoutMs));
+    holderWin.setTimeout(resolve, Math.max(0, timeoutMs));
   });
   const work = (async () => {
     try {
-      const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+      const fonts = (holderDoc as Document & { fonts?: FontFaceSet }).fonts;
       if (fonts) {
         // Explicitly trigger loads for families referenced by the holder so
         // `fonts.ready` isn't resolved before late-discovered faces start.
         const families = new Set<string>();
         holder.querySelectorAll("*").forEach((el) => {
-          const fam = getComputedStyle(el).getPropertyValue("font-family");
+          const fam = holderWin.getComputedStyle(el).getPropertyValue("font-family");
           fam.split(",").forEach((f) => {
             const name = f.trim().replace(/^["']|["']$/g, "");
             if (name) families.add(name);
@@ -321,7 +445,9 @@ export async function waitForHolderAssets(holder: HTMLElement, timeoutMs = 5000)
       }),
     );
     // One frame so the browser applies freshly-loaded fonts before raster.
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    // (jsdom has no rAF — resolve immediately there.)
+    const raf = holderWin.requestAnimationFrame?.bind(holderWin);
+    if (raf) await new Promise<void>((resolve) => raf(() => resolve()));
   })();
   await Promise.race([work, timeout]);
 }
