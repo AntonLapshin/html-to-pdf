@@ -16,9 +16,9 @@ const demo = [
 export const Default = () => (
   <PreviewGrid
     renders={[
-      { status: "ready", previewUrl: demo[0], overflow: false, error: null },
-      { status: "ready", previewUrl: demo[1], overflow: true, error: null },
-      { status: "pending", previewUrl: null, overflow: false, error: null },
+      { status: "ready", previewUrl: demo[0], detailUrl: demo[0], overflow: false, error: null },
+      { status: "ready", previewUrl: demo[1], detailUrl: demo[1], overflow: true, error: null },
+      { status: "pending", previewUrl: null, detailUrl: null, overflow: false, error: null },
     ]}
     onExpand={() => undefined}
   />

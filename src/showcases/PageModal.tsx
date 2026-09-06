@@ -13,9 +13,9 @@ export const Default = () => (
     <PageModal
       index={0}
       renders={[
-        { status: "ready", previewUrl: demoUrl, overflow: false, error: null },
-        { status: "ready", previewUrl: demoUrl, overflow: true, error: null },
-        { status: "pending", previewUrl: null, overflow: false, error: null },
+        { status: "ready", previewUrl: demoUrl, detailUrl: demoUrl, overflow: false, error: null },
+        { status: "ready", previewUrl: demoUrl, detailUrl: demoUrl, overflow: true, error: null },
+        { status: "pending", previewUrl: null, detailUrl: null, overflow: false, error: null },
       ]}
       onClose={() => undefined}
       onSelect={() => undefined}

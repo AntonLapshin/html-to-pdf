@@ -6,10 +6,11 @@ import { Slider } from "../atoms/Slider";
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 /**
- * Organism: expanded page view. Zoom 50–200%, keyboard ←/→/Esc,
+ * Organism: expanded page view. Zoom 50–300%, keyboard ←/→/Esc,
  * thumbnail strip, per-page render status, focus trap while open.
- * Shows the same canvas raster as the grid (preview pixels == PDF
- * pixels); falls back to a crisp vector iframe when `srcDoc` is provided.
+ * Defaults to the crisp vector iframe (`srcDoc`) when available so text
+ * stays sharp at any zoom; "PDF pixels" shows the exact raster that will
+ * be embedded in the PDF (high-res detail URL).
  */
 export function PageModal({
   index,
@@ -26,9 +27,22 @@ export function PageModal({
 }) {
   const total = renders.length;
   const [zoom, setZoom] = useState(100);
+  const [mode, setMode] = useState<"crisp" | "pixels">("crisp");
   const current = renders[index];
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<Element | null>(null);
+
+  // Reset zoom when switching pages; default to crisp vector when available.
+  useEffect(() => {
+    setZoom(100);
+  }, [index]);
+  useEffect(() => {
+    if (srcDoc) setMode("crisp");
+    else setMode("pixels");
+  }, [srcDoc, index]);
+
+  const rasterSrc = current?.detailUrl ?? current?.previewUrl ?? null;
+  const showVector = mode === "crisp" && !!srcDoc;
 
   const onPrev = useCallback(() => {
     if (index > 0) onSelect(index - 1);
@@ -130,20 +144,43 @@ export function PageModal({
             </Button>
           </div>
         </div>
-        <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-2">
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-4 py-2">
           <div className="w-48">
-            <Slider label="Zoom" value={zoom} min={50} max={200} step={10} unit="%" onChange={setZoom} />
+            <Slider label="Zoom" value={zoom} min={50} max={300} step={10} unit="%" onChange={setZoom} />
           </div>
+          {srcDoc && (
+            <div className="flex overflow-hidden rounded border border-slate-300 text-xs" role="group" aria-label="Preview mode">
+              <button
+                type="button"
+                onClick={() => setMode("crisp")}
+                aria-pressed={mode === "crisp"}
+                className={`px-2.5 py-1.5 font-medium ${mode === "crisp" ? "bg-indigo-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
+              >
+                Crisp
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("pixels")}
+                aria-pressed={mode === "pixels"}
+                title="Exact raster pixels embedded in the PDF"
+                className={`px-2.5 py-1.5 font-medium ${mode === "pixels" ? "bg-indigo-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
+              >
+                PDF pixels
+              </button>
+            </div>
+          )}
           <span className="text-xs text-slate-400">←/→ to navigate</span>
         </div>
         <div className="overflow-auto bg-slate-200 p-4">
           <div
             className="mx-auto aspect-[210/297] bg-white shadow"
-            style={{ width: `${zoom}%`, maxWidth: "100%" }}
+            style={{ width: `${zoom}%`, maxWidth: zoom <= 100 ? "100%" : "none" }}
           >
-            {current?.status === "ready" && current.previewUrl ? (
+            {showVector ? (
+              <iframe title={`expanded-page-${index + 1}`} srcDoc={srcDoc} sandbox="" className="h-full w-full bg-white" />
+            ) : current?.status === "ready" && rasterSrc ? (
               <img
-                src={current.previewUrl}
+                src={rasterSrc}
                 alt={`Page ${index + 1} full preview`}
                 className="h-full w-full object-fill"
                 draggable={false}
@@ -153,7 +190,7 @@ export function PageModal({
                 Render failed{current.error ? `: ${current.error}` : "."} Try lowering DPI.
               </div>
             ) : srcDoc ? (
-              <iframe title={`expanded-page-${index + 1}`} srcDoc={srcDoc} sandbox="" className="h-full w-full" />
+              <iframe title={`expanded-page-${index + 1}`} srcDoc={srcDoc} sandbox="" className="h-full w-full bg-white" />
             ) : (
               <div className="flex h-full w-full items-center justify-center text-sm text-slate-400">
                 Rendering…

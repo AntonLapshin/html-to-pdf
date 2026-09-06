@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ParsedDocument } from "../core/parseHtml";
 import {
+  canvasToDetailUrl,
   canvasToPreviewUrl,
   collectExternalRefs,
   corsWarning,
@@ -13,6 +14,8 @@ import type { PdfSettings } from "../core/settings";
 export interface PageRender {
   status: RenderStatus;
   previewUrl: string | null;
+  /** Higher-res raster for the expanded modal (falls back to previewUrl). */
+  detailUrl: string | null;
   overflow: boolean;
   error: string | null;
 }
@@ -43,7 +46,7 @@ export function usePageRenders(
     }
     const myRun = ++runId.current;
     setRendering(true);
-    setRenders(doc.pages.map(() => ({ status: "pending" as const, previewUrl: null, overflow: false, error: null })));
+    setRenders(doc.pages.map(() => ({ status: "pending" as const, previewUrl: null, detailUrl: null, overflow: false, error: null })));
 
     const timer = window.setTimeout(() => {
       void (async () => {
@@ -65,9 +68,10 @@ export function usePageRenders(
             );
             if (runId.current !== myRun) return;
             const previewUrl = canvasToPreviewUrl(canvas);
+            const detailUrl = canvasToDetailUrl(canvas);
             setRenders((prev) => {
               const next = [...prev];
-              next[i] = { status: "ready", previewUrl, overflow, error: null };
+              next[i] = { status: "ready", previewUrl, detailUrl, overflow, error: null };
               return next;
             });
           } catch (e) {
@@ -77,6 +81,7 @@ export function usePageRenders(
               next[i] = {
                 status: "error",
                 previewUrl: null,
+                detailUrl: null,
                 overflow: false,
                 error: e instanceof Error ? e.message : "Render failed",
               };
