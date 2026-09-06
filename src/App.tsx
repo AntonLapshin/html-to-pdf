@@ -4,10 +4,11 @@ import { PageModal } from "./components/organisms/PageModal";
 import { PreviewGrid } from "./components/organisms/PreviewGrid";
 import { SettingsPanel } from "./components/molecules/SettingsPanel";
 import { UploadZone } from "./components/molecules/UploadZone";
-import { buildPageSrcDoc, pageNumberText, parseHtmlPages, type ParsedDocument } from "./core/parseHtml";
+import { buildPageSrcDoc, effectiveMargins, pageNumberText, parseHtmlPages, type ParsedDocument } from "./core/parseHtml";
 import { generatePdf } from "./core/pdf";
-import { DEFAULT_SETTINGS, type PdfSettings } from "./core/settings";
+import { clampSettings, DEFAULT_SETTINGS, type PdfSettings } from "./core/settings";
 import { ShowcaseGallery } from "./ui/ShowcaseGallery";
+import { usePageRenders } from "./ui/usePageRenders";
 
 async function loadSample(): Promise<string> {
   const res = await fetch(`${import.meta.env.BASE_URL}sample/slowliving-sample.html`);
@@ -25,6 +26,8 @@ export default function App() {
   const [settings, setSettings] = useState<PdfSettings>(DEFAULT_SETTINGS);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+
+  const { renders, corsNotice, rendering } = usePageRenders(doc, settings);
 
   const applySource = (source: string, filename: string) => {
     try {
@@ -57,20 +60,22 @@ export default function App() {
     }
   };
 
-  const srcDocs = useMemo(() => {
-    if (!doc) return [];
-    return doc.pages.map((p, i) =>
-      buildPageSrcDoc(p, doc.styles, {
-        marginMm: settings.marginMm,
-        pageNumberText: pageNumberText(
-          settings.showPageNumbers,
-          settings.startPageNumber,
-          i,
-          doc.pages.length,
-        ),
-      }),
-    );
-  }, [doc, settings]);
+  // Crisp vector fallback for the expanded modal (same margins/numbers as raster).
+  const expandedSrcDoc = useMemo(() => {
+    if (!doc || expanded === null || !doc.pages[expanded]) return null;
+    const s = clampSettings(settings);
+    return buildPageSrcDoc(doc.pages[expanded], doc.styles, {
+      marginsMm: effectiveMargins(s),
+      pageNumberText: pageNumberText(
+        s.showPageNumbers,
+        s.startPageNumber,
+        expanded,
+        doc.pages.length,
+      ),
+      numberPosition: s.numberPosition,
+      pageSize: s.pageSize,
+    });
+  }, [doc, expanded, settings]);
 
   const onDownload = async () => {
     if (!doc) return;
@@ -78,7 +83,7 @@ export default function App() {
     try {
       await generatePdf(
         doc.pages.map((p) => ({ html: p.html, styles: doc.styles })),
-        settings,
+        clampSettings(settings),
         (done, total) => setBusy(`Rendering ${done}/${total}…`),
       );
     } catch (e) {
@@ -96,11 +101,13 @@ export default function App() {
     );
   }
 
+  const overflowCount = renders.filter((r) => r.overflow && r.status === "ready").length;
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
       <AppHeader
         pageCount={doc?.pages.length ?? 0}
-        busy={busy}
+        busy={busy ?? (rendering ? "Rendering previews…" : null)}
         canDownload={!!doc && !busy}
         onDownload={onDownload}
       />
@@ -112,27 +119,36 @@ export default function App() {
               {error}
             </div>
           )}
-          <PreviewGrid srcDocs={srcDocs} onExpand={setExpanded} />
+          {corsNotice && (
+            <div className="border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {corsNotice}
+            </div>
+          )}
+          {overflowCount > 0 && (
+            <div className="border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {overflowCount} page{overflowCount === 1 ? "" : "s"} taller than the usable{" "}
+              {settings.pageSize.toUpperCase()} area at current margins — content will be clipped
+              in the PDF. Reduce content or increase page height by lowering margins.
+            </div>
+          )}
+          <PreviewGrid renders={renders} onExpand={setExpanded} />
         </section>
         <aside>
           <SettingsPanel settings={settings} onChange={setSettings} />
           <p className="mt-3 text-xs text-slate-400">
             Workflow: generate HTML with an agent (split into{" "}
-            <code>.page</code> divs) → upload → tune margin/page numbers →
-            preview → Download PDF.
+            <code>.page</code> divs) → upload → tune size/margins/numbers/DPI →
+            preview (same raster as PDF) → Download PDF.
           </p>
         </aside>
       </main>
-      {expanded !== null && srcDocs[expanded] && (
+      {expanded !== null && renders[expanded] && (
         <PageModal
           index={expanded}
-          total={srcDocs.length}
-          srcDoc={srcDocs[expanded]}
+          renders={renders}
+          srcDoc={expandedSrcDoc}
           onClose={() => setExpanded(null)}
-          onPrev={() => setExpanded((v) => (v !== null && v > 0 ? v - 1 : v))}
-          onNext={() =>
-            setExpanded((v) => (v !== null && v < srcDocs.length - 1 ? v + 1 : v))
-          }
+          onSelect={setExpanded}
         />
       )}
     </div>

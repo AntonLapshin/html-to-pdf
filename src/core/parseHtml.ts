@@ -1,3 +1,6 @@
+import { scopeCss } from "./render";
+import { effectiveMargins, type NumberPosition, type PageSize } from "./settings";
+
 export interface ParsedPage {
   /** Zero-based index of the `.page` block in upload order. */
   index: number;
@@ -28,19 +31,35 @@ export function parseHtmlPages(source: string): ParsedDocument {
   return { pages, styles: styleText };
 }
 
-/** Build a standalone srcDoc for one page (styles + body + settings vars). */
+export interface PageSrcDocOpts {
+  marginsMm: { top: number; right: number; bottom: number; left: number };
+  pageNumberText: string | null;
+  numberPosition?: NumberPosition;
+  pageSize?: PageSize;
+}
+
+/**
+ * Build a standalone srcDoc for one page — used by the expanded modal as a
+ * crisp vector fallback. Uses the same scoped CSS + margins + number text as
+ * the canvas pipeline (see `core/render.ts`) so pixels stay consistent.
+ */
 export function buildPageSrcDoc(
   page: ParsedPage,
   styles: string,
-  opts: { marginMm: number; pageNumberText: string | null },
+  opts: PageSrcDocOpts,
 ): string {
+  const pos = opts.numberPosition ?? "bottom-center";
+  const align =
+    pos === "bottom-left" ? "left" : pos === "bottom-right" ? "right" : "center";
+  const scoped = scopeCss(styles, ".pdf-scope");
   return `<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;padding:0;background:#fff;}
 body{font-family:ui-sans-serif,system-ui,sans-serif;}
-.page{box-sizing:border-box;width:100%;min-height:100%;padding:${opts.marginMm}mm;position:relative;background:#fff;}
-.page-number{position:absolute;left:0;right:0;bottom:6mm;text-align:center;font-size:11px;color:#64748b;}
-${styles}
-</style></head><body><div class="page">${page.html}${
+.pdf-scope{box-sizing:border-box;width:100%;min-height:100%;position:relative;background:#fff;
+padding:${opts.marginsMm.top}mm ${opts.marginsMm.right}mm ${opts.marginsMm.bottom}mm ${opts.marginsMm.left}mm;}
+.page-number{position:absolute;left:0;right:0;bottom:6mm;text-align:${align};font-size:11px;color:#64748b;}
+${scoped}
+</style></head><body><div class="pdf-scope"><div class="page">${page.html}</div>${
     opts.pageNumberText
       ? `<div class="page-number">${opts.pageNumberText}</div>`
       : ""
@@ -56,3 +75,6 @@ export function pageNumberText(
   if (!show) return null;
   return `${start + index} / ${total}`;
 }
+
+// Re-export helper so callers can share margin math with the raster path.
+export { effectiveMargins };

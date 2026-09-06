@@ -1,28 +1,60 @@
+import type { RenderStatus } from "../../core/render";
+
 interface Props {
   index: number;
-  srcDoc: string;
+  previewUrl: string | null;
+  status: RenderStatus;
+  overflow: boolean;
   onExpand: () => void;
 }
 
-/** Molecule: one PDF page thumbnail — click expands. Showcase: `PageCard / Default`. */
-export function PageCard({ index, srcDoc, onExpand }: Props) {
+/** Molecule: one PDF page thumbnail (canvas raster) — click expands. */
+export function PageCard({ index, previewUrl, status, overflow, onExpand }: Props) {
   return (
     <button
       onClick={onExpand}
-      className="group overflow-hidden bg-white text-left shadow-sm ring-1 ring-slate-200 transition hover:ring-indigo-400"
+      className="group relative overflow-hidden bg-white text-left shadow-sm ring-1 ring-slate-200 transition hover:ring-indigo-400"
       title={`Expand page ${index + 1}`}
     >
-      <div className="aspect-[210/297] w-full bg-white">
-        <iframe
-          title={`page-${index + 1}`}
-          srcDoc={srcDoc}
-          sandbox=""
-          scrolling="no"
-          className="pointer-events-none h-full w-full"
-        />
+      <div className="relative aspect-[210/297] w-full bg-white">
+        {status === "ready" && previewUrl ? (
+          <img
+            src={previewUrl}
+            alt={`Page ${index + 1} preview`}
+            className="h-full w-full object-fill"
+            draggable={false}
+          />
+        ) : status === "error" ? (
+          <div className="flex h-full w-full items-center justify-center bg-red-50 p-4 text-center text-xs text-red-600">
+            Render failed — try lowering DPI or simplifying CSS.
+          </div>
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-xs text-slate-400">
+            Rendering…
+          </div>
+        )}
+        {overflow && status === "ready" && (
+          <span
+            title="Content is taller than the usable page area and will be clipped in the PDF."
+            className="absolute left-1 top-1 bg-amber-500 px-1.5 py-0.5 text-[10px] font-semibold text-white"
+          >
+            ⚠ overflows
+          </span>
+        )}
       </div>
-      <div className="border-t border-slate-100 px-2 py-1.5 text-xs text-slate-500 group-hover:text-indigo-600">
-        Page {index + 1} — click to expand
+      <div className="flex items-center justify-between border-t border-slate-100 px-2 py-1.5 text-xs text-slate-500 group-hover:text-indigo-600">
+        <span>Page {index + 1} — click to expand</span>
+        <span
+          className={
+            status === "ready"
+              ? "text-emerald-600"
+              : status === "error"
+                ? "text-red-600"
+                : "text-slate-400"
+          }
+        >
+          ●
+        </span>
       </div>
     </button>
   );

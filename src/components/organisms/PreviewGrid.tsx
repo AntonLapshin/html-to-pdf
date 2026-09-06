@@ -1,14 +1,15 @@
+import type { PageRender } from "../../ui/usePageRenders";
 import { PageCard } from "../molecules/PageCard";
 
 /** Organism: accurate preview grid — one card per PDF page. */
 export function PreviewGrid({
-  srcDocs,
+  renders,
   onExpand,
 }: {
-  srcDocs: string[];
+  renders: PageRender[];
   onExpand: (index: number) => void;
 }) {
-  if (srcDocs.length === 0) {
+  if (renders.length === 0) {
     return (
       <div className="bg-white p-10 text-center text-sm text-slate-500 shadow-sm ring-1 ring-slate-200">
         Upload an HTML file with <code>.page</code> blocks to see the PDF preview.
@@ -17,8 +18,15 @@ export function PreviewGrid({
   }
   return (
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
-      {srcDocs.map((srcDoc, i) => (
-        <PageCard key={i} index={i} srcDoc={srcDoc} onExpand={() => onExpand(i)} />
+      {renders.map((r, i) => (
+        <PageCard
+          key={i}
+          index={i}
+          previewUrl={r.previewUrl}
+          status={r.status}
+          overflow={r.overflow}
+          onExpand={() => onExpand(i)}
+        />
       ))}
     </div>
   );
