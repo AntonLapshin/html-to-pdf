@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+/* A4 portrait page helpers. Preview + hidden render stage share these
+   proportions so the preview stays WYSIWYG with the exported PDF. */
+:root {
+  --a4-w: 210;
+  --a4-h: 297;
+}
+
+.pdf-page-stage {
+  width: 794px; /* ~210mm @ 96dpi, full-res raster source */
+}
+
+.showcase-local {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
