@@ -14,6 +14,8 @@ export type RenderStatus = "pending" | "ready" | "error";
 export interface RenderInput {
   html: string;
   styles: string;
+  /** External stylesheet URLs re-injected into the raster holder (webfonts). */
+  links?: string[];
 }
 
 /**
@@ -190,6 +192,11 @@ export function numberOverlayStyle(position: NumberPosition): string {
   }
 }
 
+/** Escape a URL for safe embedding inside an HTML attribute. */
+function escapeAttr(url: string): string {
+  return url.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
 /** Build the exact holder element used for raster (shared by preview + PDF). */
 export function buildRenderHolder(
   page: RenderInput,
@@ -214,6 +221,9 @@ export function buildRenderHolder(
     "position:relative",
   ].join(";");
   holder.innerHTML =
+    (page.links ?? [])
+      .map((href) => `<link rel="stylesheet" href="${escapeAttr(href)}" crossorigin="anonymous">`)
+      .join("") +
     `<style>${scoped}\n${hoistedPrint}\n${REVEAL_OVERRIDE}</style>` +
     `<div class="${scope.slice(1)} ${SEEN_CLASSES}" style="box-sizing:border-box;width:100%;height:100%;` +
     `padding:${mmToPx(margins.top)}px ${mmToPx(margins.right)}px ` +
@@ -234,21 +244,167 @@ export async function renderPageCanvas(
   pageIndex: number,
   total: number,
 ): Promise<HTMLCanvasElement> {
-  const holder = buildRenderHolder(page, settings, pageIndex, total);
+  // Best effort: inline CORS-fetchable remote images as data: URLs so they
+  // survive html2canvas even when the remote host omits ACAO headers for
+  // canvas use. Failures keep the original URL (warning covers that case).
+  const inlined = await inlineExternalAssets(page);
+  const holder = buildRenderHolder(inlined, settings, pageIndex, total);
   const stage = document.createElement("div");
   stage.style.cssText = "position:fixed;left:-10000px;top:0;background:#fff;";
   stage.appendChild(holder);
   document.body.appendChild(stage);
   try {
+    // Webfonts + <img> decode asynchronously: rasterizing too early bakes in
+    // fallback fonts / blank images. Wait (bounded) before snapshotting.
+    await waitForHolderAssets(holder, 5000);
     return await html2canvas(holder, {
       scale: dpiToScale(settings.dpi),
       backgroundColor: "#ffffff",
       useCORS: true,
       logging: false,
+      imageTimeout: 15000,
     });
   } finally {
     document.body.removeChild(stage);
   }
+}
+
+/**
+ * Bounded wait for webfonts and images inside the raster holder.
+ * - `document.fonts.ready` resolves once pending `@font-face` / linked fonts
+ *   (e.g. Google Fonts) finish loading.
+ * - Each `<img>` is awaited via `decode()` (falls back to load/error events).
+ * Everything races against `timeoutMs` so a hanging host can't stall export.
+ */
+export async function waitForHolderAssets(holder: HTMLElement, timeoutMs = 5000): Promise<void> {
+  const timeout = new Promise<void>((resolve) => {
+    window.setTimeout(resolve, Math.max(0, timeoutMs));
+  });
+  const work = (async () => {
+    try {
+      const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+      if (fonts) {
+        // Explicitly trigger loads for families referenced by the holder so
+        // `fonts.ready` isn't resolved before late-discovered faces start.
+        const families = new Set<string>();
+        holder.querySelectorAll("*").forEach((el) => {
+          const fam = getComputedStyle(el).getPropertyValue("font-family");
+          fam.split(",").forEach((f) => {
+            const name = f.trim().replace(/^["']|["']$/g, "");
+            if (name) families.add(name);
+          });
+        });
+        await Promise.allSettled(
+          [...families].slice(0, 20).map((f) => fonts.load(`16px "${f}"`).catch(() => [])),
+        );
+        await fonts.ready.catch(() => undefined);
+      }
+    } catch {
+      // Font APIs missing (jsdom) or failing — continue with system fonts.
+    }
+    const imgs = Array.from(holder.querySelectorAll("img"));
+    await Promise.allSettled(
+      imgs.map(async (img) => {
+        try {
+          if (typeof img.decode === "function") {
+            await img.decode();
+            return;
+          }
+        } catch {
+          // Fall through to complete/load check below.
+        }
+        if (img.complete) return;
+        await new Promise<void>((resolve) => {
+          img.addEventListener("load", () => resolve(), { once: true });
+          img.addEventListener("error", () => resolve(), { once: true });
+        });
+      }),
+    );
+    // One frame so the browser applies freshly-loaded fonts before raster.
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  })();
+  await Promise.race([work, timeout]);
+}
+
+const dataUrlCache = new Map<string, Promise<string | null>>();
+
+/** Clear the fetch→dataURL cache (tests / long sessions). */
+export function clearInlineCache(): void {
+  dataUrlCache.clear();
+}
+
+function isRemoteUrl(url: string): boolean {
+  return /^(https?:)?\/\//i.test(url);
+}
+
+/** Fetch a remote URL and re-encode it as a `data:` URL. Null on any failure. */
+export function fetchAsDataUrl(url: string, timeoutMs = 10000): Promise<string | null> {
+  const absolute = url.startsWith("//") ? `${window.location.protocol}${url}` : url;
+  const cached = dataUrlCache.get(absolute);
+  if (cached) return cached;
+  const task = (async (): Promise<string | null> => {
+    try {
+      const ctrl = new AbortController();
+      const timer = window.setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const res = await fetch(absolute, { mode: "cors", signal: ctrl.signal });
+        if (!res.ok) return null;
+        const blob = await res.blob();
+        return await new Promise<string | null>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            resolve(typeof reader.result === "string" ? reader.result : null);
+          };
+          reader.onerror = () => resolve(null);
+          reader.readAsDataURL(blob);
+        });
+      } finally {
+        window.clearTimeout(timer);
+      }
+    } catch {
+      return null;
+    }
+  })();
+  dataUrlCache.set(absolute, task);
+  return task;
+}
+
+/**
+ * Rewrite remote `http(s)` image URLs in the page HTML/CSS to `data:` URLs
+ * when they are fetchable (CORS-enabled). Best effort: unfetchable URLs are
+ * left untouched so the CORS warning + `useCORS` path still applies.
+ */
+export async function inlineExternalAssets(page: RenderInput): Promise<RenderInput> {
+  const urls = new Set<string>();
+  const probe = document.createElement("div");
+  probe.innerHTML = page.html;
+  probe.querySelectorAll("img[src]").forEach((el) => {
+    const src = (el as HTMLImageElement).getAttribute("src")?.trim() ?? "";
+    if (src && isRemoteUrl(src) && !src.startsWith("data:")) urls.add(src);
+  });
+  probe.querySelectorAll("img[srcset]").forEach((el) => {
+    const srcset = (el as HTMLImageElement).getAttribute("srcset") ?? "";
+    srcset.split(",").forEach((part) => {
+      const u = part.trim().split(/\s+/)[0] ?? "";
+      if (u && isRemoteUrl(u) && !u.startsWith("data:")) urls.add(u);
+    });
+  });
+  for (const m of page.styles.matchAll(/url\(\s*['"]?((?:https?:)?\/\/[^'")]+)['"]?\s*\)/gi)) {
+    if (!m[1].startsWith("data:")) urls.add(m[1]);
+  }
+  if (urls.size === 0) return page;
+  const entries = await Promise.all(
+    [...urls].map(async (u) => [u, await fetchAsDataUrl(u)] as const),
+  );
+  const mapping = new Map(entries.filter(([, v]) => v).map(([k, v]) => [k, v as string]));
+  if (mapping.size === 0) return page;
+  let html = page.html;
+  let styles = page.styles;
+  for (const [from, to] of mapping) {
+    html = html.split(from).join(to);
+    styles = styles.split(from).join(to);
+  }
+  return { ...page, html, styles };
 }
 
 /**
@@ -332,15 +488,59 @@ export function collectExternalRefs(page: RenderInput): ExternalRefs {
   const tmp = document.createElement("div");
   tmp.innerHTML = page.html;
   tmp.querySelectorAll("img[src]").forEach((el) => {
-    const src = (el as HTMLImageElement).getAttribute("src") ?? "";
-    if (/^https?:\/\//i.test(src)) images.add(src);
+    const src = (el as HTMLImageElement).getAttribute("src")?.trim() ?? "";
+    if (src && isRemoteUrl(src) && !src.startsWith("data:")) images.add(src);
   });
-  const cssUrls = Array.from(
-    page.styles.matchAll(/url\(\s*['"]?(https?:[^'")]+)['"]?\s*\)/gi),
-  ).map((m) => m[1]);
-  cssUrls.forEach((u) => images.add(u));
-  const stylesheets = (page.html.match(/<link[^>]+rel=["']stylesheet["']/gi) ?? []).length;
+  tmp.querySelectorAll("img[srcset]").forEach((el) => {
+    const srcset = (el as HTMLImageElement).getAttribute("srcset") ?? "";
+    srcset.split(",").forEach((part) => {
+      const u = (part.trim().split(/\s+/)[0] ?? "").trim();
+      if (u && isRemoteUrl(u) && !u.startsWith("data:")) images.add(u);
+    });
+  });
+  // CSS url(...) references (backgrounds, @font-face src) incl. @import URLs.
+  for (const m of page.styles.matchAll(/url\(\s*['"]?((?:https?:)?\/\/[^'")]+)['"]?\s*\)/gi)) {
+    if (!m[1].startsWith("data:")) images.add(m[1]);
+  }
+  for (const m of page.styles.matchAll(/@import\s+(?:url\()?['"]?((?:https?:)?\/\/[^'")\s;]+)/gi)) {
+    images.add(m[1]);
+  }
+  // <link rel=stylesheet> discovered at parse time…
+  // Any linked file (remote or relative) is a non-inline dependency: remote
+  // ones need CORS, relative ones have no base to resolve against once the
+  // HTML is uploaded as text — both deserve the warning.
+  const linkHrefs = (page.links ?? []).filter((h) => h.length > 0);
+  // …plus any stylesheet links embedded inside the page HTML itself.
+  const embeddedLinks = Array.from(tmp.querySelectorAll('link[rel~="stylesheet"]'))
+    .map((el) => (el as HTMLLinkElement).getAttribute("href")?.trim() ?? "")
+    .filter((h) => h.length > 0);
+  const stylesheets = new Set([...linkHrefs, ...embeddedLinks]).size;
   const fontFaces = (page.styles.match(/@font-face/gi) ?? []).length;
+  return { images: [...images], stylesheets, fontFaces };
+}
+
+/** Merge refs across all pages so the warning never depends on page 1 alone. */
+export function collectExternalRefsForPages(pages: RenderInput[]): ExternalRefs {
+  const images = new Set<string>();
+  let stylesheets = 0;
+  let fontFaces = 0;
+  const seenSheets = new Set<string>();
+  for (const page of pages) {
+    const refs = collectExternalRefs(page);
+    refs.images.forEach((u) => images.add(u));
+    fontFaces += refs.fontFaces;
+    // Stylesheet <link> hrefs are usually shared — count distinct URLs once.
+    (page.links ?? []).forEach((h) => {
+      if (h && !seenSheets.has(h)) {
+        seenSheets.add(h);
+        stylesheets += 1;
+      }
+    });
+    // Embedded/stylesheet-count overflow beyond distinct links (rare): keep max.
+    if (refs.stylesheets > 0 && (page.links ?? []).length === 0) {
+      stylesheets += refs.stylesheets;
+    }
+  }
   return { images: [...images], stylesheets, fontFaces };
 }
 

@@ -168,6 +168,7 @@ export default function App() {
       ),
       numberPosition: s.numberPosition,
       pageSize: s.pageSize,
+      links: doc.links,
     });
   }, [doc, expanded, settings]);
 
@@ -176,7 +177,7 @@ export default function App() {
     setBusy("Rendering…");
     try {
       await generatePdf(
-        doc.pages.map((p) => ({ html: p.html, styles: doc.styles })),
+        doc.pages.map((p) => ({ html: p.html, styles: doc.styles, links: doc.links })),
         clampSettings(settings),
         (done, total) => setBusy(`Rendering ${done}/${total}…`),
       );

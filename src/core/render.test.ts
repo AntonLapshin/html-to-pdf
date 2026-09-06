@@ -1,14 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import { DEFAULT_SETTINGS } from "./settings";
 import {
   buildRenderHolder,
+  clearInlineCache,
   collectExternalRefs,
+  collectExternalRefsForPages,
   corsWarning,
   extractPrintCss,
+  inlineExternalAssets,
   measureOverflow,
   numberOverlayStyle,
   REVEAL_OVERRIDE,
   scopeCss,
+  waitForHolderAssets,
 } from "./render";
 
 describe("scopeCss", () => {
@@ -145,6 +149,10 @@ describe("measureOverflow", () => {
 });
 
 describe("collectExternalRefs + corsWarning", () => {
+  afterEach(() => {
+    clearInlineCache();
+    vi.unstubAllGlobals();
+  });
   it("returns null when everything is inline", () => {
     expect(corsWarning(collectExternalRefs({ html: "<p>hi</p>", styles: "p{color:red;}" }))).toBeNull();
   });
@@ -160,5 +168,81 @@ describe("collectExternalRefs + corsWarning", () => {
     const warning = corsWarning(refs);
     expect(warning).toContain("external image(s)");
     expect(warning).toContain("CORS");
+  });
+
+  it("counts parsed <link> hrefs as stylesheets", () => {
+    const refs = collectExternalRefs({
+      html: "<p>hi</p>",
+      styles: "",
+      links: ["https://fonts.googleapis.com/css2?family=Inter"],
+    });
+    expect(refs.stylesheets).toBe(1);
+    expect(corsWarning(refs)).toContain("stylesheet");
+  });
+
+  it("collects srcset + @import URLs and scans every page", () => {
+    const refs = collectExternalRefsForPages([
+      { html: "<p>inline</p>", styles: "" },
+      {
+        html: `<img srcset="https://cdn.example/a.png 1x, https://cdn.example/b.png 2x">`,
+        styles: `@import url("https://cdn.example/fonts.css");`,
+        links: ["https://fonts.googleapis.com/css2?family=Inter"],
+      },
+    ]);
+    expect(refs.images).toContain("https://cdn.example/a.png");
+    expect(refs.images).toContain("https://cdn.example/b.png");
+    expect(refs.images).toContain("https://cdn.example/fonts.css");
+    expect(refs.stylesheets).toBe(1);
+    expect(corsWarning(refs)).toContain("external image(s)");
+  });
+
+  it("injects stylesheet links into the raster holder", () => {
+    const holder = buildRenderHolder(
+      {
+        html: "<p>x</p>",
+        styles: "",
+        links: ["https://fonts.googleapis.com/css2?family=Inter"],
+      },
+      DEFAULT_SETTINGS,
+      0,
+      1,
+    );
+    const link = holder.querySelector('link[rel="stylesheet"]');
+    expect(link?.getAttribute("href")).toBe("https://fonts.googleapis.com/css2?family=Inter");
+  });
+
+  it("waitForHolderAssets resolves quickly for empty holders (jsdom has no fonts API)", async () => {
+    const holder = buildRenderHolder({ html: "<p>x</p>", styles: "" }, DEFAULT_SETTINGS, 0, 1);
+    await expect(waitForHolderAssets(holder, 1000)).resolves.toBeUndefined();
+  });
+
+  it("inlineExternalAssets rewrites fetchable remote images to data URLs", async () => {
+    const blob = new Blob(["fake-png"], { type: "image/png" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, blob: async () => blob }) as Response),
+    );
+    const out = await inlineExternalAssets({
+      html: `<img src="https://cdn.example/a.png">`,
+      styles: `a{background:url(https://cdn.example/b.png);}`,
+    });
+    expect(out.html).toContain("data:image/png;base64,");
+    expect(out.html).not.toContain("https://cdn.example/a.png");
+    expect(out.styles).toContain("data:image/png;base64,");
+  });
+
+  it("inlineExternalAssets keeps original URLs when fetch fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("CORS blocked");
+      }),
+    );
+    const page = {
+      html: `<img src="https://cdn.example/a.png">`,
+      styles: "",
+    };
+    const out = await inlineExternalAssets(page);
+    expect(out.html).toContain("https://cdn.example/a.png");
   });
 });

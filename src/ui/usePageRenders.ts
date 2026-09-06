@@ -3,7 +3,7 @@ import type { ParsedDocument } from "../core/parseHtml";
 import {
   canvasToDetailUrl,
   canvasToPreviewUrl,
-  collectExternalRefs,
+  collectExternalRefsForPages,
   corsWarning,
   measureOverflow,
   renderPageCanvas,
@@ -35,7 +35,11 @@ export function usePageRenders(
 
   const corsNotice = useMemo(() => {
     if (!doc || doc.pages.length === 0) return null;
-    return corsWarning(collectExternalRefs({ html: doc.pages[0].html, styles: doc.styles }));
+    return corsWarning(
+      collectExternalRefsForPages(
+        doc.pages.map((p) => ({ html: p.html, styles: doc.styles, links: doc.links })),
+      ),
+    );
   }, [doc]);
 
   useEffect(() => {
@@ -55,13 +59,13 @@ export function usePageRenders(
           const page = doc.pages[i];
           try {
             const overflow = measureOverflow(
-              { html: page.html, styles: doc.styles },
+              { html: page.html, styles: doc.styles, links: doc.links },
               settings,
               i,
               doc.pages.length,
             ).overflows;
             const canvas = await renderPageCanvas(
-              { html: page.html, styles: doc.styles },
+              { html: page.html, styles: doc.styles, links: doc.links },
               settings,
               i,
               doc.pages.length,

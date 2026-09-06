@@ -25,6 +25,19 @@ describe("parseHtmlPages", () => {
     expect(parseHtmlPages("<html><body><p>no pages</p></body></html>").pages).toHaveLength(0);
   });
 
+  it("extracts external stylesheet links", () => {
+    const doc = parseHtmlPages(
+      `<html><head><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">` +
+        `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">` +
+        `</head><body><div class="page">x</div></body></html>`,
+    );
+    expect(doc.links).toEqual(["https://fonts.googleapis.com/css2?family=Inter"]);
+  });
+
+  it("returns empty links for fully inline documents", () => {
+    expect(parseHtmlPages(SOURCE).links).toEqual([]);
+  });
+
   it("ignores nested .page wrappers as separate blocks in document order", () => {
     const doc = parseHtmlPages(`<div class="page">a</div><section><div class="page">b</div></section>`);
     expect(doc.pages.map((p) => p.html)).toEqual(["a", "b"]);
@@ -88,5 +101,18 @@ describe("buildPageSrcDoc", () => {
       pageNumberText: null,
     });
     expect(hidden).not.toContain('<div class="page-number"');
+  });
+
+  it("re-injects stylesheet links so webfonts load in the modal", () => {
+    const doc = parseHtmlPages(
+      `<html><head><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">` +
+        `</head><body><div class="page"><p>Hi</p></div></body></html>`,
+    );
+    const srcDoc = buildPageSrcDoc(doc.pages[0], doc.styles, {
+      marginsMm: { top: 10, right: 10, bottom: 10, left: 10 },
+      pageNumberText: null,
+      links: doc.links,
+    });
+    expect(srcDoc).toContain('href="https://fonts.googleapis.com/css2?family=Inter"');
   });
 });

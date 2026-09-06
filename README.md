@@ -97,6 +97,11 @@ See `src/core/render.ts` and `src/core/pdf.ts`.
 - **Blank images/fonts in preview or PDF** — `html2canvas` needs CORS-enabled
   URLs (`Access-Control-Allow-Origin`). The app shows a warning listing external
   images/stylesheets/webfonts; inline them as `data:` URLs or self-host them.
+  The raster pipeline now helps automatically: linked stylesheets (e.g. Google
+  Fonts) are re-injected into each page, rendering waits for webfonts/images
+  (`document.fonts.ready` + image decode, bounded ~5s), and CORS-fetchable
+  remote images are inlined to `data:` URLs before rasterizing. Anything left
+  over (non-CORS hosts, unfetchable URLs) still needs manual inlining.
 - **⚠ overflows badge** — the page content is taller than the usable area at
   current margins and will be clipped. Shorten the content or lower the margins.
 - **Tailwind classes in uploaded HTML don't render** — uploaded pages only get

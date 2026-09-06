@@ -14,6 +14,10 @@ export interface ParsedDocument {
   pages: ParsedPage[];
   /** Concatenated `<style>` blocks from the uploaded file, re-injected per page. */
   styles: string;
+  /** External stylesheet URLs (`<link rel="stylesheet" href>`), re-injected per page.
+   *  Without these, webfonts / linked CSS never load in the raster pipeline
+   *  and text falls back to system fonts. */
+  links: string[];
 }
 
 /** Parse an uploaded HTML string into `.page` blocks + shared styles. */
@@ -22,13 +26,19 @@ export function parseHtmlPages(source: string): ParsedDocument {
   const styleText = Array.from(doc.querySelectorAll("style"))
     .map((s) => s.textContent ?? "")
     .join("\n");
+  // Keep external stylesheets (Google Fonts, CDN CSS): the raster holder and
+  // the modal srcDoc are fresh documents, so linked CSS from the upload would
+  // otherwise be silently dropped and fonts would fall back to system fonts.
+  const links = Array.from(doc.querySelectorAll('link[rel~="stylesheet"]'))
+    .map((el) => el.getAttribute("href")?.trim() ?? "")
+    .filter((href) => href.length > 0);
   const nodes = Array.from(doc.querySelectorAll(".page"));
   const pages: ParsedPage[] = nodes.map((node, index) => ({
     index,
     html: (node as HTMLElement).innerHTML,
     outerHtml: (node as HTMLElement).outerHTML,
   }));
-  return { pages, styles: styleText };
+  return { pages, styles: styleText, links: [...new Set(links)] };
 }
 
 export interface PageSrcDocOpts {
@@ -36,6 +46,13 @@ export interface PageSrcDocOpts {
   pageNumberText: string | null;
   numberPosition?: NumberPosition;
   pageSize?: PageSize;
+  /** External stylesheet URLs to re-inject (see `ParsedDocument.links`). */
+  links?: string[];
+}
+
+/** Escape a URL for safe embedding inside an HTML attribute. */
+function escapeAttr(url: string): string {
+  return url.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
 /**
@@ -55,7 +72,10 @@ export function buildPageSrcDoc(
   // Same print-hoisting + reveal safety net as the canvas pipeline
   // (see `core/render.ts`) so the modal matches the raster.
   const hoistedPrint = scopeCss(extractPrintCss(styles), ".pdf-scope");
-  return `<!doctype html><html><head><meta charset="utf-8"><style>
+  const linkTags = (opts.links ?? [])
+    .map((href) => `<link rel="stylesheet" href="${escapeAttr(href)}" crossorigin="anonymous">`)
+    .join("");
+  return `<!doctype html><html><head><meta charset="utf-8">${linkTags}<style>
 html,body{margin:0;padding:0;background:#fff;}
 body{font-family:ui-sans-serif,system-ui,sans-serif;}
 .pdf-scope{box-sizing:border-box;width:100%;min-height:100%;position:relative;background:#fff;

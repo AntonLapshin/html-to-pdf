@@ -33,6 +33,8 @@ export const SAMPLES: readonly SampleMeta[] = [
  */
 export const AGENT_PROMPT_SNIPPET = `Generate a beautiful standalone HTML document with plain
 inline <style> CSS (no external files, no Tailwind classes).
+Inline images and fonts as data: URLs — external http(s) URLs need
+CORS (Access-Control-Allow-Origin) or they render blank in the PDF.
 Split the content into <div class="page">…</div> sections —
 each .page block becomes exactly one A4 PDF page.
 Keep every page short enough to fit one A4 page at 10mm margins.`;

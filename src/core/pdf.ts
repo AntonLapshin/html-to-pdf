@@ -12,7 +12,7 @@ import { PAGE_DIMS_MM, type PdfSettings } from "./settings";
  * + position as preview) to stay pixel-consistent.
  */
 export async function generatePdf(
-  pages: { html: string; styles: string }[],
+  pages: { html: string; styles: string; links?: string[] }[],
   settings: PdfSettings,
   onProgress?: (done: number, total: number) => void,
   filename = "document.pdf",
