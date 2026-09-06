@@ -1,3 +1,4 @@
+import type { PageSize } from "../../core/settings";
 import type { PageRender } from "../../ui/usePageRenders";
 import { PageCard } from "../molecules/PageCard";
 
@@ -5,9 +6,11 @@ import { PageCard } from "../molecules/PageCard";
 export function PreviewGrid({
   renders,
   onExpand,
+  pageSize = "a4",
 }: {
   renders: PageRender[];
   onExpand: (index: number) => void;
+  pageSize?: PageSize;
 }) {
   if (renders.length === 0) {
     return (
@@ -29,6 +32,7 @@ export function PreviewGrid({
             previewUrl={r.previewUrl}
             status={r.status}
             overflow={r.overflow}
+            pageSize={pageSize}
             onExpand={() => onExpand(i)}
           />
         </div>

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { PageSize } from "../../core/settings";
+import { pageAspectRatio } from "../../core/settings";
 import type { PageRender } from "../../ui/usePageRenders";
 import { Button } from "../atoms/Button";
 import { Slider } from "../atoms/Slider";
@@ -8,9 +10,9 @@ const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabi
 /**
  * Organism: expanded page view. Zoom 50–300%, keyboard ←/→/Esc,
  * thumbnail strip, per-page render status, focus trap while open.
- * Defaults to the crisp vector iframe (`srcDoc`) when available so text
- * stays sharp at any zoom; "PDF pixels" shows the exact raster that will
- * be embedded in the PDF (high-res detail URL).
+ * Defaults to the exact raster ("PDF pixels") that will be embedded in the
+ * PDF so clipping is visible before export; "Crisp" is an optional vector
+ * view (same margins/numbers, same clipping).
  */
 export function PageModal({
   index,
@@ -18,27 +20,28 @@ export function PageModal({
   srcDoc,
   onClose,
   onSelect,
+  pageSize = "a4",
 }: {
   index: number;
   renders: PageRender[];
   srcDoc?: string | null;
   onClose: () => void;
   onSelect: (index: number) => void;
+  pageSize?: PageSize;
 }) {
   const total = renders.length;
   const [zoom, setZoom] = useState(100);
-  const [mode, setMode] = useState<"crisp" | "pixels">("crisp");
+  const [mode, setMode] = useState<"crisp" | "pixels">("pixels");
   const current = renders[index];
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<Element | null>(null);
 
-  // Reset zoom when switching pages; default to crisp vector when available.
+  // Reset zoom when switching pages; stay on exact PDF pixels by default.
   useEffect(() => {
     setZoom(100);
   }, [index]);
   useEffect(() => {
-    if (srcDoc) setMode("crisp");
-    else setMode("pixels");
+    setMode("pixels");
   }, [srcDoc, index]);
 
   const rasterSrc = current?.detailUrl ?? current?.previewUrl ?? null;
@@ -173,8 +176,8 @@ export function PageModal({
         </div>
         <div className="overflow-auto bg-slate-200 p-4">
           <div
-            className="mx-auto aspect-[210/297] bg-white shadow"
-            style={{ width: `${zoom}%`, maxWidth: zoom <= 100 ? "100%" : "none" }}
+            className="mx-auto bg-white shadow"
+            style={{ width: `${zoom}%`, maxWidth: zoom <= 100 ? "100%" : "none", aspectRatio: pageAspectRatio(pageSize) }}
           >
             {showVector ? (
               <iframe title={`expanded-page-${index + 1}`} srcDoc={srcDoc} sandbox="" className="h-full w-full bg-white" />

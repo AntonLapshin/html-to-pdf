@@ -5,7 +5,7 @@ import {
   canvasToPreviewUrl,
   collectExternalRefsForPages,
   corsWarning,
-  measureOverflow,
+  measureOverflowAsync,
   renderPageCanvas,
   type RenderStatus,
 } from "../core/render";
@@ -58,11 +58,13 @@ export function usePageRenders(
           if (runId.current !== myRun) return;
           const page = doc.pages[i];
           try {
-            const overflow = measureOverflow(
-              { html: page.html, styles: doc.styles, links: doc.links },
-              settings,
-              i,
-              doc.pages.length,
+            const overflow = (
+              await measureOverflowAsync(
+                { html: page.html, styles: doc.styles, links: doc.links },
+                settings,
+                i,
+                doc.pages.length,
+              )
             ).overflows;
             const canvas = await renderPageCanvas(
               { html: page.html, styles: doc.styles, links: doc.links },

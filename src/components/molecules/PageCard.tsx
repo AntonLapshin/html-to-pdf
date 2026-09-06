@@ -1,4 +1,5 @@
 import type { RenderStatus } from "../../core/render";
+import { pageAspectRatio, type PageSize } from "../../core/settings";
 
 interface Props {
   index: number;
@@ -6,10 +7,11 @@ interface Props {
   status: RenderStatus;
   overflow: boolean;
   onExpand: () => void;
+  pageSize?: PageSize;
 }
 
 /** Molecule: one PDF page thumbnail (canvas raster) — click expands. */
-export function PageCard({ index, previewUrl, status, overflow, onExpand }: Props) {
+export function PageCard({ index, previewUrl, status, overflow, onExpand, pageSize = "a4" }: Props) {
   return (
     <button
       onClick={onExpand}
@@ -17,7 +19,7 @@ export function PageCard({ index, previewUrl, status, overflow, onExpand }: Prop
       className="group relative block w-full overflow-hidden bg-white text-left shadow-sm ring-1 ring-slate-200 transition hover:ring-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
       title={`Expand page ${index + 1}`}
     >
-      <div className="relative aspect-[210/297] w-full bg-white">
+      <div className="relative w-full bg-white" style={{ aspectRatio: pageAspectRatio(pageSize) }}>
         {status === "ready" && previewUrl ? (
           <img
             src={previewUrl}

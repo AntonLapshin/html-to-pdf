@@ -567,7 +567,10 @@ function canvasToSizedUrl(canvas: HTMLCanvasElement, maxWidth: number, quality: 
   return small.toDataURL("image/jpeg", quality);
 }
 
-/** Measure whether content overflows the usable A4 area at current margins. */
+/** Measure whether content overflows the usable area at current margins.
+ * Sync version: measures with fallback fonts (no font/image wait), so it can
+ * underestimate when webfonts load larger than system fallbacks. Prefer
+ * `measureOverflowAsync` in the app pipeline. */
 export function measureOverflow(
   page: RenderInput,
   settings: PdfSettings,
@@ -593,6 +596,51 @@ export function measureOverflow(
   document.body.appendChild(probe);
   try {
     const inner = (holder.querySelector(".page") as HTMLElement | null) ?? holder;
+    const contentPx = Math.round(inner.scrollHeight);
+    // Reserve ~8mm for the number overlay when shown.
+    const reserve = settings.showPageNumbers ? Math.round(mmToPx(8)) : 0;
+    return { overflows: contentPx > usablePx - reserve, contentPx, usablePx: usablePx - reserve };
+  } finally {
+    document.body.removeChild(probe);
+  }
+}
+
+/**
+ * Font/image-aware overflow check: same geometry as `measureOverflow`, but
+ * waits (bounded) for webfonts and images inside the probe before measuring.
+ * Use this in the app pipeline so pages using Google Fonts don't measure
+ * with fallback metrics and then raster taller once the real fonts arrive
+ * (badge says "fits", PDF clips).
+ */
+export async function measureOverflowAsync(
+  page: RenderInput,
+  settings: PdfSettings,
+  pageIndex: number,
+  total: number,
+  timeoutMs = 5000,
+): Promise<{ overflows: boolean; contentPx: number; usablePx: number }> {
+  const dims = pageDimsPx(settings.pageSize);
+  const margins = effectiveMargins(settings);
+  const usablePx =
+    dims.height - Math.round(mmToPx(margins.top) + mmToPx(margins.bottom));
+  const holder = buildRenderHolder(page, settings, pageIndex, total);
+  // Measure with natural height: unwrap fixed height, let content grow.
+  holder.style.height = "auto";
+  holder.style.overflow = "visible";
+  const scope = holder.querySelector(".pdf-scope") as HTMLElement | null;
+  if (scope) {
+    scope.style.height = "auto";
+    scope.style.overflow = "visible";
+  }
+  const inner = (holder.querySelector(".page") as HTMLElement | null) ?? holder;
+  inner.style.height = "auto";
+  inner.style.overflow = "visible";
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:fixed;left:-10000px;top:0;background:#fff;";
+  probe.appendChild(holder);
+  document.body.appendChild(probe);
+  try {
+    await waitForHolderAssets(holder, timeoutMs);
     const contentPx = Math.round(inner.scrollHeight);
     // Reserve ~8mm for the number overlay when shown.
     const reserve = settings.showPageNumbers ? Math.round(mmToPx(8)) : 0;

@@ -76,10 +76,11 @@ export function buildPageSrcDoc(
     .map((href) => `<link rel="stylesheet" href="${escapeAttr(href)}" crossorigin="anonymous">`)
     .join("");
   return `<!doctype html><html><head><meta charset="utf-8">${linkTags}<style>
-html,body{margin:0;padding:0;background:#fff;}
+html,body{margin:0;padding:0;background:#fff;height:100%;}
 body{font-family:ui-sans-serif,system-ui,sans-serif;}
-.pdf-scope{box-sizing:border-box;width:100%;min-height:100%;position:relative;background:#fff;
+.pdf-scope{box-sizing:border-box;width:100%;height:100%;position:relative;background:#fff;overflow:hidden;
 padding:${opts.marginsMm.top}mm ${opts.marginsMm.right}mm ${opts.marginsMm.bottom}mm ${opts.marginsMm.left}mm;}
+.pdf-scope .page{box-sizing:border-box;width:100%;height:100%;overflow:hidden;}
 .page-number{position:absolute;left:0;right:0;bottom:6mm;text-align:${align};font-size:11px;color:#64748b;}
 ${scoped}
 ${hoistedPrint}

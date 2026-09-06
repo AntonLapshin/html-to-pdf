@@ -63,6 +63,11 @@ export function effectiveMargins(settings: PdfSettings): EdgeMarginsMm {
   return { top: m, right: m, bottom: m, left: m };
 }
 
+/** CSS `aspect-ratio` value for preview boxes so Letter isn't squeezed into an A4 frame. */
+export function pageAspectRatio(pageSize: PageSize): string {
+  const dims = PAGE_DIMS_MM[pageSize];
+  return `${dims.width} / ${dims.height}`;
+}
 /** html2canvas scale factor derived from DPI (96 CSS dpi baseline). */
 export function dpiToScale(dpi: number): number {
   return Math.min(4, Math.max(0.75, dpi / 96));

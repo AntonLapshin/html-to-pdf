@@ -249,7 +249,7 @@ export default function App() {
               </div>
             )}
           </div>
-          <PreviewGrid renders={renders} onExpand={setExpanded} />
+          <PreviewGrid renders={renders} onExpand={setExpanded} pageSize={settings.pageSize} />
         </section>
         <aside className="min-w-0 space-y-4" aria-label="Settings and project">
           <SettingsPanel settings={settings} onChange={setSettings} />
@@ -272,6 +272,7 @@ export default function App() {
           index={expanded}
           renders={renders}
           srcDoc={expandedSrcDoc}
+          pageSize={settings.pageSize}
           onClose={() => setExpanded(null)}
           onSelect={setExpanded}
         />
