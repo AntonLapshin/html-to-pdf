@@ -642,6 +642,66 @@ export function embedFontsInSource(
 }
 
 /**
+ * Bake locally-picked image files into an HTML source string: every
+ * `<img src="…">`, `srcset` entry, and CSS `url(…)` whose basename matches
+ * one of `files` (e.g. `src="cover-photo.jpg"` vs `Cover-Photo.JPG`) is
+ * replaced with the file's `data:` URL. Matching is case-insensitive.
+ * Returns the rewritten source plus the match count.
+ */
+export function embedImagesInSource(
+  source: string,
+  files: { name: string; dataUrl: string }[],
+): { source: string; matched: number } {
+  const byBase = new Map(files.map((f) => [assetBasename(f.name), f.dataUrl]));
+  let matched = 0;
+  // `<img src="…">` (quoted or unquoted).
+  let out = source.replace(
+    /(<img\b[^>]*?\bsrc\s*=\s*)(['"]?)([^'"\s>]+)\2/gi,
+    (whole, prefix: string, quote: string, raw: string) => {
+      const ref = raw.trim();
+      if (!ref || ref.startsWith("data:") || ref.startsWith("blob:")) return whole;
+      if (/^(https?:)?\/\//i.test(ref)) return whole;
+      const data = byBase.get(assetBasename(ref));
+      if (!data) return whole;
+      matched += 1;
+      const q = quote || '"';
+      return `${prefix}${q}${data}${q}`;
+    },
+  );
+  // `srcset="a.jpg 1x, b.jpg 2x"` — rewrite each URL, keep descriptors.
+  out = out.replace(/(\bsrcset\s*=\s*)(['"])([^'"]*)\2/gi, (whole, prefix: string, quote: string, value: string) => {
+    let changed = false;
+    const next = value
+      .split(",")
+      .map((part) => {
+        const tokens = part.trim().split(/\s+/);
+        const u = tokens[0] ?? "";
+        if (!u || u.startsWith("data:") || u.startsWith("blob:")) return part;
+        if (/^(https?:)?\/\//i.test(u)) return part;
+        const data = byBase.get(assetBasename(u));
+        if (!data) return part;
+        changed = true;
+        matched += 1;
+        return [data, ...tokens.slice(1)].join(" ");
+      })
+      .join(", ");
+    return changed ? `${prefix}${quote}${next}${quote}` : whole;
+  });
+  // CSS `url(…)` image references.
+  out = out.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (whole, _quote: string, raw: string) => {
+    const ref = raw.trim();
+    if (!ref || ref.startsWith("data:") || ref.startsWith("#") || ref.startsWith("blob:")) return whole;
+    if (/^(https?:)?\/\//i.test(ref)) return whole;
+    if (!hasImageExtension(ref)) return whole;
+    const data = byBase.get(assetBasename(ref));
+    if (!data) return whole;
+    matched += 1;
+    return `url("${data}")`;
+  });
+  return { source: out, matched };
+}
+
+/**
  * Rewrite remote `http(s)` image URLs in the page HTML/CSS to `data:` URLs
  * when they are fetchable (CORS-enabled). Best effort: unfetchable URLs are
  * left untouched so the CORS warning + `useCORS` path still applies.
@@ -817,6 +877,14 @@ export interface ExternalRefs {
    * files — these always need inlining (see `embedFontsInSource`).
    */
   localFonts: string[];
+  /**
+   * Non-remote image URLs (`<img src>`, `srcset`, CSS `url(…)` with an image
+   * extension). Same root cause as `localFonts`: a text upload has no base
+   * URL, so sibling files like `cover-photo.jpg` can never resolve and
+   * rasterize blank — they must be inlined (see `embedImagesInSource` or
+   * `scripts/inline-local-images.py`).
+   */
+  localImages: string[];
 }
 
 /** True for values that can never resolve after a text upload (not remote, not inline). */
@@ -833,6 +901,55 @@ export function collectLocalFontUrls(styles: string): string[] {
     for (const m of face[0].matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi)) {
       if (isLocalAssetUrl(m[1])) found.add(m[1].trim());
     }
+  }
+  return [...found];
+}
+
+/** Image extensions recognized for `localImages` detection. */
+const IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".avif",
+  ".bmp",
+  ".ico",
+]);
+
+function hasImageExtension(ref: string): boolean {
+  const clean = ref.split(/[?#]/)[0].toLowerCase();
+  const dot = clean.lastIndexOf(".");
+  if (dot < 0) return false;
+  return IMAGE_EXTENSIONS.has(clean.slice(dot));
+}
+
+/**
+ * Collect image URLs that can never resolve after a text upload (see
+ * `localImages`): `<img src>`, `srcset` entries, and CSS `url(…)` with an
+ * image extension. Remote (`http(s)://`), `data:` and `blob:` URLs are
+ * excluded — those go through the CORS path instead.
+ */
+export function collectLocalImageUrls(html: string, styles: string): string[] {
+  const found = new Set<string>();
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  tmp.querySelectorAll("img[src]").forEach((el) => {
+    const src = (el as HTMLImageElement).getAttribute("src")?.trim() ?? "";
+    if (src && isLocalAssetUrl(src)) found.add(src);
+  });
+  tmp.querySelectorAll("img[srcset]").forEach((el) => {
+    const srcset = (el as HTMLImageElement).getAttribute("srcset") ?? "";
+    srcset.split(",").forEach((part) => {
+      const u = (part.trim().split(/\s+/)[0] ?? "").trim();
+      if (u && isLocalAssetUrl(u)) found.add(u);
+    });
+  });
+  // CSS image references (backgrounds, list-style, content…).
+  for (const m of styles.matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi)) {
+    const ref = m[1].trim();
+    if (isLocalAssetUrl(ref) && hasImageExtension(ref)) found.add(ref);
   }
   return [...found];
 }
@@ -871,13 +988,20 @@ export function collectExternalRefs(page: RenderInput): ExternalRefs {
     .filter((h) => h.length > 0);
   const stylesheets = new Set([...linkHrefs, ...embeddedLinks]).size;
   const fontFaces = (page.styles.match(/@font-face/gi) ?? []).length;
-  return { images: [...images], stylesheets, fontFaces, localFonts: collectLocalFontUrls(page.styles) };
+  return {
+    images: [...images],
+    stylesheets,
+    fontFaces,
+    localFonts: collectLocalFontUrls(page.styles),
+    localImages: collectLocalImageUrls(page.html, page.styles),
+  };
 }
 
 /** Merge refs across all pages so the warning never depends on page 1 alone. */
 export function collectExternalRefsForPages(pages: RenderInput[]): ExternalRefs {
   const images = new Set<string>();
   const localFonts = new Set<string>();
+  const localImages = new Set<string>();
   let stylesheets = 0;
   let fontFaces = 0;
   const seenSheets = new Set<string>();
@@ -885,10 +1009,17 @@ export function collectExternalRefsForPages(pages: RenderInput[]): ExternalRefs 
   // must be counted once per distinct stylesheet — summing per page
   // multiplied the count by the page count (6 faces × 23 pages = "138").
   const seenStyles = new Set<string>();
+  const seenHtml = new Set<string>();
   for (const page of pages) {
     const refs = collectExternalRefs(page);
     refs.images.forEach((u) => images.add(u));
     refs.localFonts.forEach((u) => localFonts.add(u));
+    // `<img src>` lives in per-page HTML: dedupe identical page HTML so a
+    // 23-page guide with one cover image warns "1", not "23".
+    if (!seenHtml.has(page.html)) {
+      seenHtml.add(page.html);
+      refs.localImages.forEach((u) => localImages.add(u));
+    }
     if (!seenStyles.has(page.styles)) {
       seenStyles.add(page.styles);
       fontFaces += refs.fontFaces;
@@ -905,7 +1036,13 @@ export function collectExternalRefsForPages(pages: RenderInput[]): ExternalRefs 
       stylesheets += refs.stylesheets;
     }
   }
-  return { images: [...images], stylesheets, fontFaces, localFonts: [...localFonts] };
+  return {
+    images: [...images],
+    stylesheets,
+    fontFaces,
+    localFonts: [...localFonts],
+    localImages: [...localImages],
+  };
 }
 
 export function corsWarning(refs: ExternalRefs): string | null {
@@ -913,7 +1050,8 @@ export function corsWarning(refs: ExternalRefs): string | null {
     refs.images.length === 0 &&
     refs.stylesheets === 0 &&
     refs.fontFaces === 0 &&
-    refs.localFonts.length === 0
+    refs.localFonts.length === 0 &&
+    refs.localImages.length === 0
   )
     return null;
   const bits: string[] = [];
@@ -922,8 +1060,17 @@ export function corsWarning(refs: ExternalRefs): string | null {
   if (refs.fontFaces > 0) bits.push(`${refs.fontFaces} webfont(s)`);
   if (refs.localFonts.length > 0)
     bits.push(`${refs.localFonts.length} local font file(s) (${refs.localFonts.slice(0, 2).join(", ")}${refs.localFonts.length > 2 ? ", …" : ""})`);
+  if (refs.localImages.length > 0)
+    bits.push(
+      `${refs.localImages.length} local image(s) (${refs.localImages.slice(0, 2).join(", ")}${refs.localImages.length > 2 ? ", …" : ""})`,
+    );
   const head = `${bits.join(", ")} detected.`;
   const remedies: string[] = [];
+  if (refs.localImages.length > 0) {
+    remedies.push(
+      `Local images can't load from uploaded text (the browser never sees sibling files, so they rasterize blank) — attach them with “Attach images”, or bake them in: python3 scripts/inline-local-images.py guide.html.`,
+    );
+  }
   if (refs.localFonts.length > 0) {
     remedies.push(
       `Local font files can't load from uploaded text (the browser never sees sibling files) — attach them with “Attach fonts”, or bake them in: python3 scripts/inline-local-fonts.py guide.html.`,

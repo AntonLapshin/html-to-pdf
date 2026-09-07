@@ -11,7 +11,7 @@ import { generatePdf } from "./core/pdf";
 import { deserializeProject, projectFilename, serializeProject } from "./core/project";
 import { SAMPLES } from "./core/samples";
 import { clampSettings, DEFAULT_SETTINGS, detectPageSize, extractPagePadding, type PdfSettings } from "./core/settings";
-import { collectExternalRefsForPages, embedFontsInSource } from "./core/render";
+import { collectExternalRefsForPages, embedFontsInSource, embedImagesInSource } from "./core/render";
 import {
   addRecentFile,
   clearRecentFiles,
@@ -194,6 +194,39 @@ export default function App() {
     }
   };
 
+  const onAttachImages = async (files: FileList | null) => {
+    if (!files || files.length === 0 || !source) return;
+    try {
+      const entries = await Promise.all(
+        Array.from(files).map(
+          (f) =>
+            new Promise<{ name: string; dataUrl: string }>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () =>
+                typeof reader.result === "string"
+                  ? resolve({ name: f.name, dataUrl: reader.result })
+                  : reject(new Error(`Could not read ${f.name}.`));
+              reader.onerror = () => reject(new Error(`Could not read ${f.name}.`));
+              reader.readAsDataURL(f);
+            }),
+        ),
+      );
+      const { source: embedded, matched } = embedImagesInSource(source, entries);
+      if (matched === 0) {
+        setError(
+          `None of the ${entries.length} image file(s) match an <img src> or url(…) in ${filename}. ` +
+            `Filenames must match the referenced basename (e.g. cover-photo.jpg for src="cover-photo.jpg").`,
+        );
+        return;
+      }
+      setError(null);
+      // Keep the user's current settings — only the image bytes change.
+      applySource(embedded, filename, false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to embed images.");
+    }
+  };
+
   const onLoadProjectFile = async (file: File) => {
     try {
       const loaded = deserializeProject(await file.text());
@@ -211,6 +244,13 @@ export default function App() {
     return collectExternalRefsForPages(
       doc.pages.map((p) => ({ html: p.html, styles: doc.styles, links: doc.links })),
     ).localFonts.length;
+  }, [doc]);
+
+  const localImageCount = useMemo(() => {
+    if (!doc) return 0;
+    return collectExternalRefsForPages(
+      doc.pages.map((p) => ({ html: p.html, styles: doc.styles, links: doc.links })),
+    ).localImages.length;
   }, [doc]);
 
   const htmlDesignNote = useMemo(() => {
@@ -318,6 +358,26 @@ export default function App() {
             {corsNotice && (
               <div className="border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 <p>{corsNotice}</p>
+                {localImageCount > 0 && (
+                  <p className="mt-2">
+                    <label className="cursor-pointer font-medium text-amber-900 underline hover:text-amber-950 focus-visible:outline-2 focus-visible:outline-indigo-600">
+                      Attach images…
+                      <input
+                        type="file"
+                        accept=".png,.jpg,.jpeg,.gif,.webp,.svg,.avif,.bmp"
+                        multiple
+                        className="hidden"
+                        aria-label="Attach local image files to embed them"
+                        onChange={(e) => {
+                          void onAttachImages(e.target.files);
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>{" "}
+                    — pick the image files the HTML references and they are
+                    baked in as data: URLs (stays in this browser session).
+                  </p>
+                )}
                 {localFontCount > 0 && (
                   <p className="mt-2">
                     <label className="cursor-pointer font-medium text-amber-900 underline hover:text-amber-950 focus-visible:outline-2 focus-visible:outline-indigo-600">

@@ -6,8 +6,10 @@ import {
   collectExternalRefs,
   collectExternalRefsForPages,
   collectLocalFontUrls,
+  collectLocalImageUrls,
   corsWarning,
   embedFontsInSource,
+  embedImagesInSource,
   extractPageBackground,
   extractPrintCss,
   inlineExternalAssets,
@@ -419,6 +421,87 @@ describe("embedFontsInSource", () => {
     ]);
     expect(matched).toBe(0);
     expect(source).toBe("p{color:red;}");
+  });
+});
+
+describe("local images (cover-photo.jpg regression)", () => {
+  // cover.html referenced a sibling `cover-photo.jpg`. A text upload has no
+  // base URL, so the browser can never resolve it — the page renders fine
+  // from disk but rasterizes blank in preview + PDF until inlined.
+  const IMG = "data:image/jpeg;base64,AAAA";
+
+  it("detects relative img src, srcset and CSS image urls, not remote/data", () => {
+    const refs = collectLocalImageUrls(
+      `<img src="cover-photo.jpg"><img src="https://cdn.example/a.png">` +
+        `<img src="data:image/png;base64,AAA">` +
+        `<img srcset="thumb.jpg 1x, https://cdn.example/b.png 2x">`,
+      `.hero{background:url("assets/bg.jpg");}a{background:url(https://cdn.example/c.png);}`,
+    );
+    expect(refs).toEqual(
+      expect.arrayContaining(["cover-photo.jpg", "thumb.jpg", "assets/bg.jpg"]),
+    );
+    expect(refs).not.toContain("https://cdn.example/a.png");
+    expect(refs).not.toContain("data:image/png;base64,AAA");
+  });
+
+  it("ignores non-image CSS urls (fonts belong to collectLocalFontUrls)", () => {
+    expect(
+      collectLocalImageUrls("<p>x</p>", `@font-face{src:url("_fonts/NotoSerif.ttf");}`),
+    ).toEqual([]);
+  });
+
+  it("warns with the image remedy and stays silent when inline", () => {
+    expect(corsWarning(collectExternalRefs({ html: "<p>hi</p>", styles: "" }))).toBeNull();
+    const warning = corsWarning(
+      collectExternalRefs({ html: `<img src="cover-photo.jpg">`, styles: "" }),
+    );
+    expect(warning).toContain("1 local image(s)");
+    expect(warning).toContain("cover-photo.jpg");
+    expect(warning).toContain("Attach images");
+    expect(warning).toContain("inline-local-images.py");
+  });
+
+  it("dedupes the same cover image across pages instead of counting per page", () => {
+    const pages = Array.from({ length: 5 }, (_, i) => ({
+      html: `<img src="cover-photo.jpg"><p>page ${i}</p>`,
+      styles: "",
+    }));
+    // NOTE: distinct innerHTML per page here (page N text) — a real guide
+    // shares identical cover HTML once; dedupe is by identical page HTML.
+    const same = Array.from({ length: 5 }, () => ({
+      html: `<img src="cover-photo.jpg">`,
+      styles: "",
+    }));
+    expect(collectExternalRefsForPages(same).localImages).toHaveLength(1);
+    expect(pages.length).toBe(5);
+  });
+
+  it("embedImagesInSource rewrites src, srcset and CSS urls by basename", () => {
+    const src =
+      `<img src="assets/cover-photo.jpg">` +
+      `<img srcset="thumb.jpg 1x, big.jpg 2x">` +
+      `<style>.hero{background:url("BG.JPG");}a{background:url(https://cdn.example/c.png);}</style>`;
+    const { source, matched } = embedImagesInSource(src, [
+      { name: "cover-photo.jpg", dataUrl: IMG },
+      { name: "thumb.jpg", dataUrl: IMG },
+      { name: "big.jpg", dataUrl: IMG },
+      { name: "bg.jpg", dataUrl: IMG },
+    ]);
+    expect(matched).toBe(4);
+    expect(source).not.toContain("cover-photo.jpg");
+    expect(source).not.toContain("thumb.jpg");
+    expect(source).not.toContain("BG.JPG");
+    expect(source).toContain("https://cdn.example/c.png");
+    expect(source.split(IMG).length - 1).toBe(4);
+  });
+
+  it("embedImagesInSource leaves remote/data urls alone and reports zero", () => {
+    const { source, matched } = embedImagesInSource(
+      `<img src="https://cdn.example/a.png"><img src="data:image/png;base64,AAA">`,
+      [{ name: "a.png", dataUrl: IMG }],
+    );
+    expect(matched).toBe(0);
+    expect(source).toContain("https://cdn.example/a.png");
   });
 });
 

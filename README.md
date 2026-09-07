@@ -181,6 +181,14 @@ as ADDED — classify the residual rather than chasing zero.
   in General settings.
 - **Blank images/fonts in preview or PDF** — two different causes, the app
   warning tells them apart:
+  - *Local images* (`cover-photo.jpg`, `assets/hero.png`): an uploaded
+    file is read as text, so the browser can never resolve sibling image
+    files — these **always** rasterize blank until inlined, even though the
+    file renders fine from disk. Three fixes (pick one): click
+    **Attach images…** under the warning and pick the referenced image
+    files; bake them offline with
+    `python3 scripts/inline-local-images.py guide.html` (→
+    `guide.inlined.html`); or paste an already-inlined file.
   - *Remote URLs* (`https://…`): `html2canvas` needs CORS-enabled URLs
     (`Access-Control-Allow-Origin`). The raster pipeline auto-inlines
     CORS-fetchable remote images, font files, and whole linked stylesheets
@@ -225,6 +233,10 @@ as ADDED — classify the residual rather than chasing zero.
   [--extra-font Name.ttf=/path/to.ttf] [-o out.html]` — bake local
   `@font-face` files into the HTML as `data:` URLs (fixes blank/wrong fonts
   after upload; no dependencies, stdlib only)
+- `python3 scripts/inline-local-images.py guide.html [--img-dirs DIR …]
+  [--extra-img Name.jpg=/path/to.jpg] [-o out.html]` — bake local
+  `<img src>` / CSS image files into the HTML as `data:` URLs (fixes blank
+  images after upload; no dependencies, stdlib only)
 
 ## Deploy
 
