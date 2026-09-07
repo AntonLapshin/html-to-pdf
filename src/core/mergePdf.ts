@@ -4,12 +4,28 @@ async function loadPdfLib() {
   return import("pdf-lib");
 }
 
-async function loadReadablePdf(data: Uint8Array | ArrayBuffer) {
+/**
+ * Copy input into a fresh zero-offset Uint8Array so the parser always sees
+ * exactly these bytes. Views over a larger/shared buffer (subarray, pooled
+ * Blob parts) carry a nonzero byteOffset that a parser may ignore, which
+ * would misparse one file as a fragment of another — pages collapsing onto
+ * each other instead of concatenating.
+ */
+function toFreshBytes(data: Uint8Array | ArrayBuffer): Uint8Array {
+  if (data instanceof Uint8Array) {
+    const copy = new Uint8Array(data.length);
+    copy.set(data);
+    return copy;
+  }
+  return new Uint8Array(data.slice(0));
+}
+
+async function loadReadablePdf(data: Uint8Array | ArrayBuffer, label: string) {
   const { PDFDocument } = await loadPdfLib();
   try {
-    return await PDFDocument.load(data, { ignoreEncryption: true });
+    return await PDFDocument.load(toFreshBytes(data), { ignoreEncryption: true });
   } catch {
-    throw new Error("One of the PDFs could not be read (corrupt or password-protected).");
+    throw new Error(`${label} could not be read (corrupt or password-protected).`);
   }
 }
 
@@ -49,7 +65,7 @@ export function formatBytes(bytes: number): string {
 export async function getPdfPageCount(data: Uint8Array | ArrayBuffer): Promise<number> {
   const { PDFDocument } = await loadPdfLib();
   try {
-    const doc = await PDFDocument.load(data, { ignoreEncryption: true });
+    const doc = await PDFDocument.load(toFreshBytes(data), { ignoreEncryption: true });
     return doc.getPageCount();
   } catch {
     throw new Error("That file is not a readable PDF (corrupt or password-protected).");
@@ -59,15 +75,30 @@ export async function getPdfPageCount(data: Uint8Array | ArrayBuffer): Promise<n
 /**
  * Combine PDFs in the given order — one output page per input page,
  * original page sizes preserved. Pure bytes in, bytes out.
+ *
+ * No-overlap guarantee: each source page is copied onto its own fresh
+ * output page (`copyPages` + `addPage`, never drawing two sources onto one
+ * page), and afterwards the output page count is asserted to equal the sum
+ * of the input page counts — any collapse/overlap fails loudly instead of
+ * producing a silently short document.
  */
 export async function mergePdfBytes(sources: (Uint8Array | ArrayBuffer)[]): Promise<Uint8Array> {
   if (sources.length === 0) throw new Error("Add at least one PDF to merge.");
   const { PDFDocument } = await loadPdfLib();
   const out = await PDFDocument.create();
-  for (const src of sources) {
-    const doc = await loadReadablePdf(src);
-    const pages = await out.copyPages(doc, doc.getPageIndices());
-    pages.forEach((p) => out.addPage(p));
+  let expectedPages = 0;
+  for (let i = 0; i < sources.length; i++) {
+    const doc = await loadReadablePdf(sources[i], `PDF #${i + 1}`);
+    const indices = doc.getPageIndices();
+    expectedPages += indices.length;
+    const pages = await out.copyPages(doc, indices);
+    for (const p of pages) out.addPage(p);
+  }
+  const actualPages = out.getPageCount();
+  if (actualPages !== expectedPages) {
+    throw new Error(
+      `Merge failed integrity check: expected ${expectedPages} pages but got ${actualPages} (pages must never overlap).`,
+    );
   }
   return out.save();
 }
