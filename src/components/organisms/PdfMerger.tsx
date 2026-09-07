@@ -116,7 +116,9 @@ export function PdfMerger() {
           if (e.dataTransfer.files?.length) {
             e.preventDefault();
             setDraggingFiles(false);
-            void addFiles(e.dataTransfer.files);
+            // Snapshot: DataTransfer FileLists can be cleared by the browser
+            // once the drop completes, so copy before the async read.
+            void addFiles(Array.from(e.dataTransfer.files));
           }
         }}
         className={`bg-white p-6 text-center shadow-sm ring-1 transition sm:p-8 ${
@@ -133,9 +135,11 @@ export function PdfMerger() {
           className="hidden"
           aria-label="Choose PDF files to merge"
           onChange={(e) => {
-            const files = e.target.files;
+            // Snapshot first: input.files is a live FileList — resetting
+            // input.value empties it in place, silently dropping the pick.
+            const files = e.target.files ? Array.from(e.target.files) : [];
             e.target.value = "";
-            if (files?.length) void addFiles(files);
+            if (files.length) void addFiles(files);
           }}
         />
         <p className="text-sm font-medium text-slate-700">
