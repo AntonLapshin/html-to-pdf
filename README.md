@@ -4,7 +4,7 @@ Pure-UI tool: upload any HTML already split into `.page` blocks → accurate
 per-page PDF preview (click to expand) → tune margins / page numbers / DPI →
 download a PDF where **each `.page` DOM tree is exactly one PDF page**.
 
-Live demo: `https://antonlapshin.github.io/html-to-pdf/`
+Live demo: https://antonlapshin.github.io/html-to-pdf
 
 ## Quickstart
 
