@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 import * as Button from "./Button";
 import * as PageCard from "./PageCard";
 import * as PageModal from "./PageModal";
+import * as PdfMerger from "./PdfMerger";
 import * as PreviewGrid from "./PreviewGrid";
 import * as ProjectBar from "./ProjectBar";
 import * as SamplesGallery from "./SamplesGallery";
@@ -35,4 +36,5 @@ export const showcaseFiles: readonly ShowcaseFile[] = [
   { name: UploadZone.name, showcases: { Default: UploadZone.Default, WithRecents: UploadZone.WithRecents } },
   { name: SamplesGallery.name, showcases: { Default: SamplesGallery.Default, Active: SamplesGallery.Active } },
   { name: ProjectBar.name, showcases: { Default: ProjectBar.Default, Empty: ProjectBar.Empty } },
+  { name: PdfMerger.name, showcases: { Default: PdfMerger.Default } },
 ];

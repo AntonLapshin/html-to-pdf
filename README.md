@@ -21,6 +21,14 @@ Typical workflow (under a minute):
 4. Click any page to expand (←/→ in modal, Esc to close), then **Download PDF**.
 5. Your work autosaves to the browser; **Save project** exports a JSON backup.
 
+## Merge PDFs
+
+Switch to the **Merge PDFs** tab to combine PDFs: **Upload PDFs** (or drag &
+drop them), drag rows to reorder (↑ ↓ buttons work too, ✕ removes), then
+**Download combined PDF** (`combined.pdf`, pages concatenated in list order).
+Merging runs fully in the browser via `pdf-lib` (loaded on demand) and
+preserves each page's original size.
+
 ## Samples gallery
 
 | Sample | File | Contents |

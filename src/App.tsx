@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppHeader } from "./components/organisms/AppHeader";
 import { PageModal } from "./components/organisms/PageModal";
+import { PdfMerger } from "./components/organisms/PdfMerger";
 import { PreviewGrid } from "./components/organisms/PreviewGrid";
 import { ProjectBar } from "./components/molecules/ProjectBar";
 import { SamplesGallery } from "./components/molecules/SamplesGallery";
@@ -53,6 +54,7 @@ export default function App() {
   const [settings, setSettings] = useState<PdfSettings>(DEFAULT_SETTINGS);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [mode, setMode] = useState<"html" | "merge">("html");
   const [recents, setRecents] = useState<RecentFile[]>(() => getRecentFiles());
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const restoredRef = useRef(false);
@@ -322,10 +324,44 @@ export default function App() {
       </a>
       <AppHeader
         pageCount={doc?.pages.length ?? 0}
-        busy={busy ?? (rendering ? "Rendering previews…" : null)}
-        canDownload={!!doc && !busy}
+        busy={mode === "merge" ? null : (busy ?? (rendering ? "Rendering previews…" : null))}
+        canDownload={mode === "html" && !!doc && !busy}
         onDownload={onDownload}
+        subtitle={
+          mode === "merge"
+            ? "Upload PDFs · drag to reorder · download combined"
+            : undefined
+        }
       />
+      <div className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-7xl gap-1 px-4 sm:px-6" role="tablist" aria-label="Tool mode">
+          {(
+            [
+              { id: "html", label: "HTML → PDF" },
+              { id: "merge", label: "Merge PDFs" },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              role="tab"
+              aria-selected={mode === tab.id}
+              onClick={() => setMode(tab.id)}
+              className={`border-b-2 px-4 py-2 text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-indigo-600 ${
+                mode === tab.id
+                  ? "border-indigo-600 text-indigo-700"
+                  : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {mode === "merge" ? (
+        <main id="main-content" className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
+          <PdfMerger />
+        </main>
+      ) : (
       <main id="main-content" className="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[1fr_320px]">
         <section className="min-w-0 space-y-6" aria-label="Document and preview">
           <UploadZone
@@ -426,7 +462,8 @@ export default function App() {
           </p>
         </aside>
       </main>
-      {expanded !== null && renders[expanded] && (
+      )}
+      {expanded !== null && mode === "html" && renders[expanded] && (
         <PageModal
           index={expanded}
           renders={renders}

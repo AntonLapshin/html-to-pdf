@@ -6,11 +6,13 @@ export function AppHeader({
   busy,
   canDownload,
   onDownload,
+  subtitle,
 }: {
   pageCount: number;
   busy: string | null;
   canDownload: boolean;
   onDownload: () => void;
+  subtitle?: string;
 }) {
   return (
     <header className="border-b border-slate-200 bg-white px-6 py-4">
@@ -18,8 +20,12 @@ export function AppHeader({
         <div>
           <h1 className="text-xl font-semibold">html-to-pdf</h1>
           <p className="text-xs text-slate-500">
-            {pageCount} page{pageCount === 1 ? "" : "s"} · each{" "}
-            <code>.page</code> = one PDF page
+            {subtitle ?? (
+              <>
+                {pageCount} page{pageCount === 1 ? "" : "s"} · each{" "}
+                <code>.page</code> = one PDF page
+              </>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-3">
