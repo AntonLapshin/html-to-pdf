@@ -128,4 +128,19 @@ describe("buildPageSrcDoc", () => {
     });
     expect(srcDoc).toContain('href="https://fonts.googleapis.com/css2?family=Inter"');
   });
+
+  it("puts tool margins on the inner .page so negative-margin bands survive (chapter-2 day-band)", () => {
+    const doc = parseHtmlPages(
+      `<html><head><style>.page{padding:51pt 51pt 0 51pt;}` +
+        `.day-band{margin:-12pt -16pt 0 -16pt;padding:12pt 16pt 10pt 16pt;}</style></head>` +
+        `<body><div class="page"><div class="day-band"><h2>Day 8</h2></div></div></body></html>`,
+    );
+    const srcDoc = buildPageSrcDoc(doc.pages[0], doc.styles, {
+      marginsMm: { top: 10, right: 10, bottom: 10, left: 10 },
+      pageNumberText: null,
+    });
+    // Scope has no padding; the inner page box owns the tool margins.
+    expect(srcDoc).toContain(".pdf-scope{box-sizing:border-box;width:100%;height:100%;position:relative;background:#fff;overflow:hidden;\npadding:0;}");
+    expect(srcDoc).toContain(".pdf-scope .page{box-sizing:border-box;width:100%;height:100%;overflow:hidden;\npadding:10mm 10mm 10mm 10mm;}");
+  });
 });

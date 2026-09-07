@@ -315,6 +315,46 @@ describe("shell reset (v7_fixed.html @media screen regression)", () => {
     expect(styleText).toContain(SHELL_RESET);
     expect(styleText.indexOf(SHELL_RESET)).toBeGreaterThan(styleText.indexOf("box-shadow:0 2pt"));
   });
+
+  it("neutralizes authored .page padding on the scope (margins live on inner .page)", () => {
+    expect(SHELL_RESET).toContain("padding:0");
+  });
+});
+
+describe("negative-margin bleed (chapter-2 day-band regression)", () => {
+  // chapter-2.html: `.page{padding:51pt 51pt 0 51pt}` + first-child
+  // `.day-band{margin:-12pt -16pt 0 -16pt}` bleeds into the page padding while
+  // staying inside the page border box. The tool used to put its own margins
+  // on the outer `.pdf-scope` while the inner `.page` (overflow:hidden, no
+  // padding) clipped that bleed — the band lost its paddings/background.
+  const CHAPTER2_CSS =
+    ".page{padding:51pt 51pt 0 51pt;background:#FBF8F2;}" +
+    ".day-band{background:#E5DCD3;padding:12pt 16pt 10pt 16pt;margin:-12pt -16pt 0 -16pt;}";
+  const CHAPTER2_HTML = `<div class="day-band"><h2>Day 8: Sunset &amp; Candlelight Routine</h2></div>`;
+
+  it("keeps tool margins + bleed + clip on the single inner .page box", () => {
+    const holder = buildRenderHolder(
+      { html: CHAPTER2_HTML, styles: CHAPTER2_CSS },
+      DEFAULT_SETTINGS,
+      0,
+      1,
+    );
+    const scope = holder.querySelector(".pdf-scope") as HTMLElement;
+    const inner = holder.querySelector(".pdf-scope .page") as HTMLElement;
+    // Scope itself has no padding (authored .page padding is reset there)…
+    expect(scope.style.padding).toBe("0px");
+    expect(scope.style.overflow).toBe("hidden");
+    // …the inner box owns the tool margins, so the negative-margin bleed
+    // stays inside its border box instead of crossing an overflow:hidden edge.
+    expect(inner.style.overflow).toBe("hidden");
+    expect(inner.style.padding).not.toBe("");
+    expect(inner.style.padding).not.toBe("0px");
+    // Authored band keeps its negative margins + own padding (scoped, intact).
+    const styleText = holder.querySelector("style")?.textContent ?? "";
+    expect(styleText).toContain(".pdf-scope .day-band");
+    expect(styleText).toContain("margin:-12pt -16pt 0 -16pt");
+    expect(styleText).toContain("padding:12pt 16pt 10pt 16pt");
+  });
 });
 
 describe("local fonts + webfont counting (v7_fixed_p21_23.html regression)", () => {

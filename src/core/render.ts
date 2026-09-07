@@ -185,9 +185,13 @@ export const SEEN_CLASSES = "seen visible shown revealed loaded in-view";
  * author meant for the browser viewer — `@media screen { .page { margin:…;
  * box-shadow:… } }` — would otherwise shrink the content and paint a drop
  * shadow inside the PDF. The tool owns this geometry (inline size + margins),
- * so margin/shadow are neutralized here, after all authored CSS.
+ * so margin/shadow/padding are neutralized here, after all authored CSS.
+ * Padding is safe to force to 0: the tool's own margins live as inline
+ * padding on the inner `.page` box (see `buildRenderHolder`), never on the
+ * scope itself.
  */
-export const SHELL_RESET = ".pdf-scope{margin:0 !important;box-shadow:none !important;}";
+export const SHELL_RESET =
+  ".pdf-scope{margin:0 !important;box-shadow:none !important;padding:0 !important;}";
 
 /**
  * Read the author's page background out of uploaded `<style>` CSS.
@@ -281,10 +285,19 @@ export function buildRenderHolder(
       .map((href) => `<link rel="stylesheet" href="${escapeAttr(href)}" crossorigin="anonymous">`)
       .join("") +
     `<style>.pdf-scope{background:#fff;}\n${scoped}\n${hoistedPrint}\n${SHELL_RESET}\n${REVEAL_OVERRIDE}</style>` +
+    // Tool margins live as padding on the INNER `.page` box — not on the
+    // scope. Author patterns like `.day-band{margin:-12pt -16pt 0 -16pt}` are
+    // designed to bleed into the `.page` padding while staying inside its
+    // border box (background starts 16pt out, text stays aligned via 16pt of
+    // its own padding). When the margins lived on the outer scope, that bleed
+    // crossed the inner box border and its `overflow:hidden` clipped the band
+    // (missing paddings/background in the PDF). Keeping padding + bleed +
+    // clip on one box restores the author's layout exactly.
     `<div class="${scope.slice(1)} ${SEEN_CLASSES}" style="box-sizing:border-box;width:100%;height:100%;` +
+    `padding:0;position:relative;overflow:hidden;">` +
+    `<div class="page ${SEEN_CLASSES}" style="box-sizing:border-box;width:100%;height:100%;overflow:hidden;` +
     `padding:${mmToPx(margins.top)}px ${mmToPx(margins.right)}px ` +
-    `${mmToPx(margins.bottom)}px ${mmToPx(margins.left)}px;position:relative;overflow:hidden;">` +
-    `<div class="page ${SEEN_CLASSES}" style="box-sizing:border-box;width:100%;height:100%;overflow:hidden;">${page.html}</div>` +
+    `${mmToPx(margins.bottom)}px ${mmToPx(margins.left)}px;">${page.html}</div>` +
     (settings.showPageNumbers
       ? `<div class="page-number" style="${numberOverlayStyle(settings.numberPosition)}">` +
         `${pageNumberText(settings.showPageNumbers, settings.startPageNumber, pageIndex, total) ?? ""}</div>`
@@ -729,7 +742,14 @@ export function measureOverflow(
   document.body.appendChild(probe);
   try {
     const inner = (holder.querySelector(".page") as HTMLElement | null) ?? holder;
-    const contentPx = Math.round(inner.scrollHeight);
+    inner.style.height = "auto";
+    inner.style.overflow = "visible";
+    // Inner `.page` carries the tool margins as padding now (negative-margin
+    // bleed fix) — `scrollHeight` includes that padding, so subtract it to
+    // get the content height comparable to the usable area.
+    // (jsdom has no layout: `scrollHeight` is 0 there, so clamp at 0.)
+    const padPx = mmToPx(margins.top) + mmToPx(margins.bottom);
+    const contentPx = Math.max(0, Math.round(inner.scrollHeight - padPx));
     // Reserve ~8mm for the number overlay when shown.
     const reserve = settings.showPageNumbers ? Math.round(mmToPx(8)) : 0;
     return { overflows: contentPx > usablePx - reserve, contentPx, usablePx: usablePx - reserve };
@@ -774,7 +794,10 @@ export async function measureOverflowAsync(
   document.body.appendChild(probe);
   try {
     await waitForHolderAssets(holder, timeoutMs);
-    const contentPx = Math.round(inner.scrollHeight);
+    // See `measureOverflow`: inner padding must be excluded from the content
+    // height (tool margins moved onto the inner box for the bleed fix).
+    const padPx = mmToPx(margins.top) + mmToPx(margins.bottom);
+    const contentPx = Math.max(0, Math.round(inner.scrollHeight - padPx));
     // Reserve ~8mm for the number overlay when shown.
     const reserve = settings.showPageNumbers ? Math.round(mmToPx(8)) : 0;
     return { overflows: contentPx > usablePx - reserve, contentPx, usablePx: usablePx - reserve };
