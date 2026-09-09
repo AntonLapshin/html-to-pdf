@@ -17,6 +17,11 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      // Phase 1 skeleton: report only, no enforcement (thresholds in Phase 3).
+    },
   },
 })

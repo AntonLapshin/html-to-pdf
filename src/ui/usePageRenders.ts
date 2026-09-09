@@ -42,20 +42,29 @@ export function usePageRenders(
     );
   }, [doc]);
 
-  useEffect(() => {
-    if (!doc) {
-      setRenders([]);
-      setRendering(false);
-      return;
+  // Derive the pending state during render when inputs change (not in an
+  // effect): each new doc/settings starts visibly pending before the
+  // debounced raster run below fills results in.
+  const [prevInputs, setPrevInputs] = useState({ doc, settings });
+  if (prevInputs.doc !== doc || prevInputs.settings !== settings) {
+    setPrevInputs({ doc, settings });
+    if (doc) {
+      setRenders(doc.pages.map(() => ({ status: "pending" as const, previewUrl: null, detailUrl: null, overflow: false, error: null })));
+      setRendering(true);
     }
-    const myRun = ++runId.current;
-    setRendering(true);
-    setRenders(doc.pages.map(() => ({ status: "pending" as const, previewUrl: null, detailUrl: null, overflow: false, error: null })));
+  }
 
+  useEffect(() => {
+    // No doc: derive empty state during render (see return below) instead of
+    // syncing state here — the raster pipeline has nothing to run.
+    if (!doc) return;
+    const myRun = ++runId.current;
+
+    let cancelled = false;
     const timer = window.setTimeout(() => {
       void (async () => {
         for (let i = 0; i < doc.pages.length; i++) {
-          if (runId.current !== myRun) return;
+          if (cancelled || runId.current !== myRun) return;
           const page = doc.pages[i];
           try {
             const overflow = (
@@ -72,7 +81,7 @@ export function usePageRenders(
               i,
               doc.pages.length,
             );
-            if (runId.current !== myRun) return;
+            if (cancelled || runId.current !== myRun) return;
             const previewUrl = canvasToPreviewUrl(canvas);
             const detailUrl = canvasToDetailUrl(canvas);
             setRenders((prev) => {
@@ -81,7 +90,7 @@ export function usePageRenders(
               return next;
             });
           } catch (e) {
-            if (runId.current !== myRun) return;
+            if (cancelled || runId.current !== myRun) return;
             setRenders((prev) => {
               const next = [...prev];
               next[i] = {
@@ -95,15 +104,18 @@ export function usePageRenders(
             });
           }
         }
-        if (runId.current === myRun) setRendering(false);
+        if (!cancelled && runId.current === myRun) setRendering(false);
       })();
     }, 250);
 
     return () => {
+      cancelled = true;
       window.clearTimeout(timer);
-      if (runId.current === myRun) setRendering(false);
     };
   }, [doc, settings]);
 
+  // Without a doc there is nothing to render: report the empty state
+  // directly instead of syncing it into state from the effect above.
+  if (!doc) return { renders: [], corsNotice: null, rendering: false };
   return { renders, corsNotice, rendering };
 }

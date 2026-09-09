@@ -1,5 +1,9 @@
-import { extractPrintCss, REVEAL_OVERRIDE, scopeCss, SEEN_CLASSES, SHELL_RESET } from "./render";
+import { extractPrintCss, REVEAL_OVERRIDE, scopeCss, SEEN_CLASSES, SHELL_RESET } from "./cssScope";
+import { pageNumberText } from "./pageNumbers";
 import { effectiveMargins, type NumberPosition, type PageSize } from "./settings";
+
+// Re-exported for existing callers (cycle-free: canonical home is `./pageNumbers`).
+export { pageNumberText };
 
 export interface ParsedPage {
   /** Zero-based index of the `.page` block in upload order. */
@@ -92,16 +96,6 @@ ${REVEAL_OVERRIDE}
       ? `<div class="page-number">${opts.pageNumberText}</div>`
       : ""
   }</div></body></html>`;
-}
-
-export function pageNumberText(
-  show: boolean,
-  start: number,
-  index: number,
-  total: number,
-): string | null {
-  if (!show) return null;
-  return `${start + index} / ${total}`;
 }
 
 // Re-export helper so callers can share margin math with the raster path.

@@ -13,6 +13,8 @@ dist-ssr
 *.local
 out/
 __pycache__/
+coverage/
+__pycache__/
 
 # Editor directories and files
 .vscode/*

@@ -37,12 +37,14 @@ export function PageModal({
   const previousFocus = useRef<Element | null>(null);
 
   // Reset zoom when switching pages; stay on exact PDF pixels by default.
-  useEffect(() => {
-    setZoom(100);
-  }, [index]);
-  useEffect(() => {
+  // Render-time adjustment (not effects): same reset semantics, applied
+  // before paint, and no set-state-in-effect warnings.
+  const [prevPage, setPrevPage] = useState({ index, srcDoc });
+  if (prevPage.index !== index || prevPage.srcDoc !== srcDoc) {
+    if (prevPage.index !== index) setZoom(100);
     setMode("pixels");
-  }, [srcDoc, index]);
+    setPrevPage({ index, srcDoc });
+  }
 
   const rasterSrc = current?.detailUrl ?? current?.previewUrl ?? null;
   const showVector = mode === "crisp" && !!srcDoc;
