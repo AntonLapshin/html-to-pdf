@@ -21,11 +21,12 @@ references are left untouched and reported.
 from __future__ import annotations
 
 import argparse
-import base64
-import mimetypes
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from inline_lib import basename, data_url, default_output, index_files, report_result
 
 URL_RE = re.compile(r"url\(\s*(['\"]?)([^'\")]+)\1\s*\)", re.IGNORECASE)
 
@@ -38,32 +39,12 @@ MIME_OVERRIDES = {
 }
 
 
-def data_url(path: Path) -> str:
-    mime = MIME_OVERRIDES.get(path.suffix.lower()) or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    blob = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:{mime};base64,{blob}"
+def font_data_url(path: Path) -> str:
+    return data_url(path, MIME_OVERRIDES.get(path.suffix.lower()))
 
 
 def index_fonts(dirs: list[Path], extra: list[str]) -> dict[str, Path]:
-    index: dict[str, Path] = {}
-    for d in dirs:
-        if not d.is_dir():
-            print(f"warn: font dir not found: {d}", file=sys.stderr)
-            continue
-        for p in sorted(d.iterdir()):
-            if p.is_file() and p.suffix.lower() in MIME_OVERRIDES:
-                index.setdefault(p.name.lower(), p)
-    for spec in extra:
-        if "=" in spec:
-            _name, path = spec.split("=", 1)
-        else:
-            _name, path = Path(spec).name, spec
-        p = Path(path).expanduser()
-        if not p.is_file():
-            print(f"warn: font file not found: {path}", file=sys.stderr)
-            continue
-        index[p.name.lower()] = p
-    return index
+    return index_files(dirs, extra, set(MIME_OVERRIDES), "font")
 
 
 def main() -> int:
@@ -103,7 +84,7 @@ def main() -> int:
             return m.group(0)
         if re.match(r"^(https?:)?//", ref, re.IGNORECASE):
             return m.group(0)  # remote — the tool auto-inlines CORS-enabled ones
-        base = ref.split("?")[0].split("#")[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
+        base = basename(ref)
         if not base:
             return m.group(0)
         font = index.get(base)
@@ -111,19 +92,15 @@ def main() -> int:
             missing.add(ref)
             return m.group(0)
         if base not in cache:
-            cache[base] = data_url(font)
+            cache[base] = font_data_url(font)
         matched += 1
         return f'url("{cache[base]}")'
 
     out = URL_RE.sub(repl, text)
 
-    output = Path(args.output) if args.output else html_path.with_name(f"{html_path.stem}.inlined.html")
+    output = default_output(html_path, args.output)
     output.write_text(out, encoding="utf-8")
-    print(f"inlined {matched} reference(s) → {output}", file=sys.stderr)
-    if missing:
-        print("unmatched (left as-is):", file=sys.stderr)
-        for ref in sorted(missing):
-            print(f"  {ref}", file=sys.stderr)
+    report_result(matched, missing, output)
     return 0
 
 

@@ -1,4 +1,4 @@
-import type { RenderStatus } from "../../core/render";
+import type { RenderStatus } from "../../core/renderTypes";
 import { pageAspectRatio, type PageSize } from "../../core/settings";
 
 interface Props {

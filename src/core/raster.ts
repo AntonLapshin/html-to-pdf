@@ -1,6 +1,7 @@
 import { toCanvas } from "html-to-image";
 import html2canvas from "html2canvas";
 import { inlineExternalAssets } from "./assets";
+import { RasterError } from "./errors";
 import {
   extractPageBackground,
   extractPrintCss,
@@ -112,6 +113,7 @@ export async function renderPageCanvas(
   // canvas use. Failures keep the original URL (warning covers that case).
   const inlined = await inlineExternalAssets(page);
   const scale = dpiToScale(settings.dpi);
+  let primaryError: unknown = null;
   try {
     const holder = buildRenderHolder(inlined, settings, pageIndex, total);
     // Stage inside a hidden same-origin iframe at a natural (0,0) position:
@@ -156,8 +158,10 @@ export async function renderPageCanvas(
     } finally {
       document.body.removeChild(iframe);
     }
-  } catch {
-    // Fall through to html2canvas.
+  } catch (e) {
+    // Primary engine failed (tainted canvas, SVG-hostile markup, blocked
+    // font host) — fall through to html2canvas, keeping the cause.
+    primaryError = e;
   }
   const holder = buildRenderHolder(inlined, settings, pageIndex, total);
   const stage = document.createElement("div");
@@ -174,6 +178,12 @@ export async function renderPageCanvas(
       useCORS: true,
       logging: false,
       imageTimeout: 15000,
+    });
+  } catch (fallbackError) {
+    // Both engines failed: raise a typed error chaining the causes instead
+    // of the raw html2canvas failure alone.
+    throw new RasterError(pageIndex, `Raster failed for page ${pageIndex + 1} (primary + fallback engines).`, {
+      cause: { primary: primaryError, fallback: fallbackError },
     });
   } finally {
     document.body.removeChild(stage);
@@ -266,43 +276,21 @@ export async function waitForHolderAssets(holder: HTMLElement, timeoutMs = 5000)
 /** Measure whether content overflows the usable area at current margins.
  * Sync version: measures with fallback fonts (no font/image wait), so it can
  * underestimate when webfonts load larger than system fallbacks. Prefer
- * `measureOverflowAsync` in the app pipeline. */
+ * `measureOverflowAsync` in the app pipeline. Both share one geometry core
+ * (`overflowNumbers`) so the two paths can never diverge. */
 export function measureOverflow(
   page: RenderInput,
   settings: PdfSettings,
   pageIndex: number,
   total: number,
 ): { overflows: boolean; contentPx: number; usablePx: number } {
-  const dims = pageDimsPx(settings.pageSize);
-  const margins = effectiveMargins(settings, page.styles);
-  const usablePx =
-    dims.height - Math.round(mmToPx(margins.top) + mmToPx(margins.bottom));
-  const holder = buildRenderHolder(page, settings, pageIndex, total);
-  // Measure with natural height: unwrap fixed height, let content grow.
-  holder.style.height = "auto";
-  holder.style.overflow = "visible";
-  const scope = holder.querySelector(".pdf-scope") as HTMLElement | null;
-  if (scope) {
-    scope.style.height = "auto";
-    scope.style.overflow = "visible";
-  }
+  const { holder, inner, margins, usablePx } = buildOverflowProbe(page, settings, pageIndex, total);
   const probe = document.createElement("div");
   probe.style.cssText = "position:fixed;left:-10000px;top:0;background:#fff;";
   probe.appendChild(holder);
   document.body.appendChild(probe);
   try {
-    const inner = (holder.querySelector(".page") as HTMLElement | null) ?? holder;
-    inner.style.height = "auto";
-    inner.style.overflow = "visible";
-    // Inner `.page` carries the tool margins as padding now (negative-margin
-    // bleed fix) — `scrollHeight` includes that padding, so subtract it to
-    // get the content height comparable to the usable area.
-    // (jsdom has no layout: `scrollHeight` is 0 there, so clamp at 0.)
-    const padPx = mmToPx(margins.top) + mmToPx(margins.bottom);
-    const contentPx = Math.max(0, Math.round(inner.scrollHeight - padPx));
-    // Reserve ~8mm for the number overlay when shown.
-    const reserve = settings.showPageNumbers ? Math.round(mmToPx(8)) : 0;
-    return { overflows: contentPx > usablePx - reserve, contentPx, usablePx: usablePx - reserve };
+    return overflowNumbers(inner, margins, usablePx, settings.showPageNumbers);
   } finally {
     document.body.removeChild(probe);
   }
@@ -322,10 +310,32 @@ export async function measureOverflowAsync(
   total: number,
   timeoutMs = 5000,
 ): Promise<{ overflows: boolean; contentPx: number; usablePx: number }> {
+  const { holder, inner, margins, usablePx } = buildOverflowProbe(page, settings, pageIndex, total);
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:fixed;left:-10000px;top:0;background:#fff;";
+  probe.appendChild(holder);
+  document.body.appendChild(probe);
+  try {
+    await waitForHolderAssets(holder, timeoutMs);
+    return overflowNumbers(inner, margins, usablePx, settings.showPageNumbers);
+  } finally {
+    document.body.removeChild(probe);
+  }
+}
+
+/**
+ * Shared overflow-probe construction behind `measureOverflow` /
+ * `measureOverflowAsync`: natural-height holder + usable-area geometry.
+ */
+function buildOverflowProbe(
+  page: RenderInput,
+  settings: PdfSettings,
+  pageIndex: number,
+  total: number,
+): { holder: HTMLElement; inner: HTMLElement; margins: { top: number; bottom: number }; usablePx: number } {
   const dims = pageDimsPx(settings.pageSize);
   const margins = effectiveMargins(settings, page.styles);
-  const usablePx =
-    dims.height - Math.round(mmToPx(margins.top) + mmToPx(margins.bottom));
+  const usablePx = dims.height - Math.round(mmToPx(margins.top) + mmToPx(margins.bottom));
   const holder = buildRenderHolder(page, settings, pageIndex, total);
   // Measure with natural height: unwrap fixed height, let content grow.
   holder.style.height = "auto";
@@ -338,20 +348,24 @@ export async function measureOverflowAsync(
   const inner = (holder.querySelector(".page") as HTMLElement | null) ?? holder;
   inner.style.height = "auto";
   inner.style.overflow = "visible";
-  const probe = document.createElement("div");
-  probe.style.cssText = "position:fixed;left:-10000px;top:0;background:#fff;";
-  probe.appendChild(holder);
-  document.body.appendChild(probe);
-  try {
-    await waitForHolderAssets(holder, timeoutMs);
-    // See `measureOverflow`: inner padding must be excluded from the content
-    // height (tool margins moved onto the inner box for the bleed fix).
-    const padPx = mmToPx(margins.top) + mmToPx(margins.bottom);
-    const contentPx = Math.max(0, Math.round(inner.scrollHeight - padPx));
-    // Reserve ~8mm for the number overlay when shown.
-    const reserve = settings.showPageNumbers ? Math.round(mmToPx(8)) : 0;
-    return { overflows: contentPx > usablePx - reserve, contentPx, usablePx: usablePx - reserve };
-  } finally {
-    document.body.removeChild(probe);
-  }
+  return { holder, inner, margins, usablePx };
+}
+
+/**
+ * Shared overflow arithmetic: inner `.page` carries the tool margins as
+ * padding (negative-margin bleed fix) — `scrollHeight` includes that
+ * padding, so subtract it to get the content height comparable to the
+ * usable area. (jsdom has no layout: `scrollHeight` is 0 there, clamp at 0.)
+ * ~8mm is reserved for the number overlay when shown.
+ */
+function overflowNumbers(
+  inner: HTMLElement,
+  margins: { top: number; bottom: number },
+  usablePx: number,
+  showPageNumbers: boolean,
+): { overflows: boolean; contentPx: number; usablePx: number } {
+  const padPx = mmToPx(margins.top) + mmToPx(margins.bottom);
+  const contentPx = Math.max(0, Math.round(inner.scrollHeight - padPx));
+  const reserve = showPageNumbers ? Math.round(mmToPx(8)) : 0;
+  return { overflows: contentPx > usablePx - reserve, contentPx, usablePx: usablePx - reserve };
 }

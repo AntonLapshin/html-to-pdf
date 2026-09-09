@@ -30,17 +30,17 @@ export interface PdfSettings {
   quality: number;
 }
 
-export const DEFAULT_SETTINGS: PdfSettings = {
+export const DEFAULT_SETTINGS: PdfSettings = Object.freeze({
   pageSize: "a4",
   marginMm: 10,
-  marginsMm: { top: 10, right: 10, bottom: 14, left: 10 },
+  marginsMm: Object.freeze({ top: 10, right: 10, bottom: 14, left: 10 }),
   marginMode: "uniform",
   showPageNumbers: true,
   startPageNumber: 1,
   numberPosition: "bottom-center",
   dpi: 192,
   quality: 0.92,
-};
+}) as PdfSettings;
 
 export const A4_WIDTH_MM = 210;
 export const A4_HEIGHT_MM = 297;

@@ -22,11 +22,12 @@ left untouched and reported.
 from __future__ import annotations
 
 import argparse
-import base64
-import mimetypes
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from inline_lib import basename, data_url, default_output, index_files_recursive, report_result
 
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif", ".bmp", ".ico"}
 
@@ -40,13 +41,9 @@ SRCSET_RE = re.compile(r'(\bsrcset\s*=\s*)(["\'])([^"\']*)\2', re.IGNORECASE)
 URL_RE = re.compile(r"url\(\s*(['\"]?)([^'\")]+)\1\s*\)", re.IGNORECASE)
 
 
-def data_url(path: Path) -> str:
-    mime = mimetypes.guess_type(path.name)[0]
-    if path.suffix.lower() == ".svg" and mime is None:
-        mime = "image/svg+xml"
-    mime = mime or "application/octet-stream"
-    blob = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:{mime};base64,{blob}"
+def image_data_url(path: Path) -> str:
+    override = "image/svg+xml" if path.suffix.lower() == ".svg" else None
+    return data_url(path, override)
 
 
 def is_remote(ref: str) -> bool:
@@ -54,25 +51,7 @@ def is_remote(ref: str) -> bool:
 
 
 def index_images(dirs: list[Path], extra: list[str]) -> dict[str, Path]:
-    index: dict[str, Path] = {}
-    for d in dirs:
-        if not d.is_dir():
-            print(f"warn: image dir not found: {d}", file=sys.stderr)
-            continue
-        for p in sorted(d.rglob("*")):
-            if p.is_file() and p.suffix.lower() in IMG_EXTS:
-                index.setdefault(p.name.lower(), p)
-    for spec in extra:
-        if "=" in spec:
-            _name, path = spec.split("=", 1)
-        else:
-            _name, path = Path(spec).name, spec
-        p = Path(path).expanduser()
-        if not p.is_file():
-            print(f"warn: image file not found: {path}", file=sys.stderr)
-            continue
-        index[p.name.lower()] = p
-    return index
+    return index_files_recursive(dirs, extra, IMG_EXTS, "image")
 
 
 def main() -> int:
@@ -106,14 +85,14 @@ def main() -> int:
     missing: set[str] = set()
 
     def lookup(ref: str) -> str | None:
-        base = ref.split("?")[0].split("#")[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
+        base = basename(ref)
         if not base:
             return None
         img = index.get(base)
         if img is None:
             return None
         if base not in cache:
-            cache[base] = data_url(img)
+            cache[base] = image_data_url(img)
         return cache[base]
 
     def repl_img_src(m: re.Match[str]) -> str:
@@ -175,13 +154,9 @@ def main() -> int:
     out = SRCSET_RE.sub(repl_srcset, out)
     out = URL_RE.sub(repl_url, out)
 
-    output = Path(args.output) if args.output else html_path.with_name(f"{html_path.stem}.inlined.html")
+    output = default_output(html_path, args.output)
     output.write_text(out, encoding="utf-8")
-    print(f"inlined {matched} reference(s) → {output}", file=sys.stderr)
-    if missing:
-        print("unmatched (left as-is):", file=sys.stderr)
-        for ref in sorted(missing):
-            print(f"  {ref}", file=sys.stderr)
+    report_result(matched, missing, output)
     return 0
 
 

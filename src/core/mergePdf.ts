@@ -4,6 +4,10 @@ async function loadPdfLib() {
   return import("pdf-lib");
 }
 
+// Single source of truth lives in `pdfUtils.ts` (Phase 2); re-exported here
+// so existing `mergePdf` imports keep working.
+export { formatBytes } from "./pdfUtils";
+
 /**
  * Copy input into a fresh zero-offset Uint8Array so the parser always sees
  * exactly these bytes. Views over a larger/shared buffer (subarray, pooled
@@ -48,20 +52,6 @@ export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
   return next;
 }
 
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB"];
-  let v = bytes / 1024;
-  let u = 0;
-  while (v >= 1024 && u < units.length - 1) {
-    v /= 1024;
-    u++;
-  }
-  return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[u]}`;
-}
-
-/** Page count of an in-memory PDF. Throws a friendly Error on invalid input. */
 export async function getPdfPageCount(data: Uint8Array | ArrayBuffer): Promise<number> {
   const { PDFDocument } = await loadPdfLib();
   try {

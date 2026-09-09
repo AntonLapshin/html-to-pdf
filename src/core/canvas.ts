@@ -12,6 +12,26 @@ export function reencodeImage(canvas: HTMLCanvasElement, quality: number): strin
 }
 
 /**
+ * Single downscale step behind `canvasToDataUrl`: returns `canvas` unchanged
+ * when it already fits `maxWidth`, otherwise a white-backed canvas scaled to
+ * `maxWidth`. Null only when a 2d context is unavailable (then callers
+ * encode the original).
+ */
+export function downscaleCanvas(canvas: HTMLCanvasElement, maxWidth: number): HTMLCanvasElement | null {
+  const ratio = Math.min(1, maxWidth / canvas.width);
+  if (ratio >= 1) return canvas;
+  const small = document.createElement("canvas");
+  small.width = Math.max(1, Math.round(canvas.width * ratio));
+  small.height = Math.max(1, Math.round(canvas.height * ratio));
+  const ctx = small.getContext("2d");
+  if (!ctx) return null;
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, small.width, small.height);
+  ctx.drawImage(canvas, 0, 0, small.width, small.height);
+  return small;
+}
+
+/**
  * Single downscale helper behind `canvasToPreviewUrl` / `canvasToDetailUrl`:
  * normalize canvas → JPEG data-URL, downscaling to `maxWidth` when larger.
  * Small canvases are encoded as-is at the requested quality.
@@ -21,17 +41,8 @@ export function canvasToDataUrl(
   maxWidth: number,
   quality: number,
 ): string {
-  const ratio = Math.min(1, maxWidth / canvas.width);
-  if (ratio >= 1) return canvas.toDataURL("image/jpeg", quality);
-  const small = document.createElement("canvas");
-  small.width = Math.max(1, Math.round(canvas.width * ratio));
-  small.height = Math.max(1, Math.round(canvas.height * ratio));
-  const ctx = small.getContext("2d");
-  if (!ctx) return canvas.toDataURL("image/jpeg", quality);
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(0, 0, small.width, small.height);
-  ctx.drawImage(canvas, 0, 0, small.width, small.height);
-  return small.toDataURL("image/jpeg", quality);
+  const small = downscaleCanvas(canvas, maxWidth);
+  return (small ?? canvas).toDataURL("image/jpeg", quality);
 }
 
 /** Downscaled data-URL for grid thumbnails (same pixels as PDF, fewer bytes).

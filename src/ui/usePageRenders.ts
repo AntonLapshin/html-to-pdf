@@ -1,14 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ParsedDocument } from "../core/parseHtml";
-import {
-  canvasToDetailUrl,
-  canvasToPreviewUrl,
-  collectExternalRefsForPages,
-  corsWarning,
-  measureOverflowAsync,
-  renderPageCanvas,
-  type RenderStatus,
-} from "../core/render";
+import { canvasToDetailUrl, canvasToPreviewUrl } from "../core/canvas";
+import { collectExternalRefsForPages, corsWarning } from "../core/refs";
+import { measureOverflowAsync, renderPageCanvas } from "../core/raster";
+import type { RenderStatus } from "../core/renderTypes";
 import type { PdfSettings } from "../core/settings";
 
 export interface PageRender {

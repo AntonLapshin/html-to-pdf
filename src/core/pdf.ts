@@ -1,5 +1,6 @@
 import { jsPDF } from "jspdf";
-import { reencodeImage, renderPageCanvas } from "./render";
+import { reencodeImage } from "./canvas";
+import { renderPageCanvas } from "./raster";
 import { PAGE_DIMS_MM, type PdfSettings } from "./settings";
 
 /**

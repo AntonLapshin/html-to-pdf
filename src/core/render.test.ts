@@ -1,26 +1,27 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { DEFAULT_SETTINGS } from "./settings";
+import { buildRenderHolder, measureOverflow, waitForHolderAssets } from "./raster";
 import {
-  buildRenderHolder,
   clearInlineCache,
+  inlineExternalAssets,
+  inlineExternalStylesheets,
+} from "./assets";
+import { embedFontsInSource, embedImagesInSource } from "./embed";
+import {
   collectExternalRefs,
   collectExternalRefsForPages,
   collectLocalFontUrls,
   collectLocalImageUrls,
   corsWarning,
-  embedFontsInSource,
-  embedImagesInSource,
+} from "./refs";
+import {
   extractPageBackground,
   extractPrintCss,
-  inlineExternalAssets,
-  inlineExternalStylesheets,
-  measureOverflow,
-  numberOverlayStyle,
   REVEAL_OVERRIDE,
   scopeCss,
   SHELL_RESET,
-  waitForHolderAssets,
-} from "./render";
+} from "./cssScope";
+import { numberOverlayStyle } from "./pageNumbers";
 
 describe("scopeCss", () => {
   it("scopes plain selectors under the given scope", () => {

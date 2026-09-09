@@ -1,4 +1,5 @@
-import { hasImageExtension, isRemoteUrl } from "./assets";
+import { isRemoteUrl } from "./assets";
+import { hasImageExtension } from "./embed";
 import type { RenderInput } from "./renderTypes";
 
 /**
