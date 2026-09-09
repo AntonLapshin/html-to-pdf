@@ -1,6 +1,7 @@
 import { deserializeProject, serializeProject } from "./project";
 import type { PdfSettings } from "./settings";
 
+/** Autosaved session snapshot (source + settings + timestamp). */
 export interface AutosaveEntry {
   filename: string;
   source: string;
@@ -8,6 +9,7 @@ export interface AutosaveEntry {
   savedAt: string;
 }
 
+/** One sidebar recent-file entry (full source kept for one-click reopen). */
 export interface RecentFile {
   name: string;
   savedAt: string;
@@ -16,8 +18,11 @@ export interface RecentFile {
   source: string;
 }
 
+/** localStorage key for the autosaved session. */
 export const AUTOSAVE_KEY = "html-to-pdf:autosave:v1";
+/** localStorage key for the recent-file history. */
 export const RECENTS_KEY = "html-to-pdf:recents:v1";
+/** Maximum recent files kept in the sidebar. */
 export const MAX_RECENTS = 5;
 /** Skip autosaving huge uploads that would blow the ~5MB localStorage quota. */
 export const MAX_AUTOSAVE_CHARS = 800_000;
@@ -44,6 +49,7 @@ export function saveAutosave(entry: AutosaveEntry): void {
   }
 }
 
+/** Read the autosaved session, or null when missing/corrupt/unavailable. */
 export function loadAutosave(): AutosaveEntry | null {
   const store = storage();
   if (!store) return null;
@@ -62,6 +68,7 @@ export function loadAutosave(): AutosaveEntry | null {
   }
 }
 
+/** Drop the autosaved session (best-effort). */
 export function clearAutosave(): void {
   try {
     storage()?.removeItem(AUTOSAVE_KEY);
@@ -92,6 +99,7 @@ export function getRecentFiles(): RecentFile[] {
   }
 }
 
+/** Prepend an entry to the capped recent-file history (deduped, quota-safe). */
 export function addRecentFile(entry: RecentFile): RecentFile[] {
   const next = [
     entry,
@@ -111,6 +119,7 @@ export function addRecentFile(entry: RecentFile): RecentFile[] {
   return next;
 }
 
+/** Drop the recent-file history (best-effort). */
 export function clearRecentFiles(): void {
   try {
     storage()?.removeItem(RECENTS_KEY);

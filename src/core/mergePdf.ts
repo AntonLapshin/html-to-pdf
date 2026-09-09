@@ -33,6 +33,7 @@ async function loadReadablePdf(data: Uint8Array | ArrayBuffer, label: string) {
   }
 }
 
+/** Display metadata for one PDF in the merge list. */
 export interface PdfSourceMeta {
   /** Stable client-side id (for list keys + drag & drop). */
   id: string;
@@ -52,6 +53,7 @@ export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
   return next;
 }
 
+/** Page count of raw PDF bytes. Throws a friendly Error when unreadable. */
 export async function getPdfPageCount(data: Uint8Array | ArrayBuffer): Promise<number> {
   const { PDFDocument } = await loadPdfLib();
   try {

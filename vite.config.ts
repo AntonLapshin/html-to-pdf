@@ -17,11 +17,22 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    globals: true,
     include: ['src/**/*.test.{ts,tsx}'],
+    setupFiles: ['./vitest.setup.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
-      // Phase 1 skeleton: report only, no enforcement (thresholds in Phase 3).
+      include: ['src/core/**/*.ts', 'src/ui/**/*.ts'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/showcases/**', '**/*.d.ts'],
+      // Phase 3 enforcement: core ≥90% lines/functions/statements.
+      // pdf/canvas/assets new-code goal is 100% (see docs/CONTRIBUTING.md).
+      thresholds: {
+        lines: 90,
+        functions: 90,
+        statements: 90,
+        branches: 85,
+      },
     },
   },
 })

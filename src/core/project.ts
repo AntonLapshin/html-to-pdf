@@ -1,5 +1,6 @@
 import { clampSettings, DEFAULT_SETTINGS, type PdfSettings } from "./settings";
 
+/** Current project-file schema version (checked on load). */
 export const PROJECT_VERSION = 1;
 
 /** Serializable project file (port of book's saveProject/loadProject). */
@@ -13,6 +14,7 @@ export interface SavedProject {
   settings: PdfSettings;
 }
 
+/** Validated project ready to restore into the app state. */
 export interface LoadedProject {
   filename: string;
   source: string;

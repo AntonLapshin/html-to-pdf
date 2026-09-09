@@ -1,5 +1,10 @@
 # html-to-pdf — 3-Phase Plan
 
+> **Superseded.** The original Phases 1–3 below all shipped. The active
+> refactoring plan is [`REFACTOR_PLAN.md`](./REFACTOR_PLAN.md); architecture
+> is documented in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md). This file
+> is kept for history.
+
 Pure-UI tool (no backend). Workflow: an agent generates a beautiful HTML doc
 (e.g. a slow-living guide) already split into `<div class="page">…</div>`
 blocks → user runs `npm run dev` (host `0.0.0.0`) → uploads the HTML →

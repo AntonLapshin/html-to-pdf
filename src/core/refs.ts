@@ -165,6 +165,10 @@ export function collectExternalRefsForPages(pages: RenderInput[]): ExternalRefs 
   };
 }
 
+/**
+ * Human-readable CORS/local-file warning for a ref scan, or null when
+ * everything is inline. Names the cause and the fix (attach vs bake-in).
+ */
 export function corsWarning(refs: ExternalRefs): string | null {
   if (
     refs.images.length === 0 &&

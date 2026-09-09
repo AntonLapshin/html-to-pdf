@@ -36,6 +36,7 @@ const IMAGE_EXTENSIONS = new Set([
   ".ico",
 ]);
 
+/** True when `ref` points at a raster/vector image file (by extension). */
 export function hasImageExtension(ref: string): boolean {
   const clean = ref.split(/[?#]/)[0].toLowerCase();
   const dot = clean.lastIndexOf(".");

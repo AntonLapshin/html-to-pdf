@@ -1,3 +1,4 @@
+/** One gallery entry: sidebar metadata pointing at a bundled HTML file. */
 export interface SampleMeta {
   id: string;
   title: string;
@@ -5,6 +6,7 @@ export interface SampleMeta {
   file: string;
 }
 
+/** Bundled `.page`-split examples shown in the Samples gallery. */
 export const SAMPLES: readonly SampleMeta[] = [
   {
     id: "slow-living",

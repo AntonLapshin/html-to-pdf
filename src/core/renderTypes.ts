@@ -5,6 +5,7 @@
  */
 export type RenderStatus = "pending" | "ready" | "error";
 
+/** One `.page` worth of raster input: HTML + shared styles + font links. */
 export interface RenderInput {
   html: string;
   styles: string;

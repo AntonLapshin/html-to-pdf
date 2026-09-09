@@ -11,10 +11,12 @@ export type Result<T, E extends Error = Error> =
   | { ok: true; value: T }
   | { ok: false; error: E };
 
+/** Success case for `Result<T>`. */
 export function ok<T>(value: T): Result<T, never> {
   return { ok: true, value };
 }
 
+/** Failure case for `Result<T>`. */
 export function err<E extends Error>(error: E): Result<never, E> {
   return { ok: false, error };
 }

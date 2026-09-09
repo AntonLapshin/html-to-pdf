@@ -28,6 +28,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+/** A user-picked file already read into a `data:` URL. */
 export interface NamedDataUrl {
   name: string;
   dataUrl: string;

@@ -1,8 +1,11 @@
+/** Supported paper sizes (see `PAGE_DIMS_MM` for mm geometry). */
 export type PageSize = "a4" | "letter";
 /** `"html"` reuses the uploaded file's own `.page` padding as the margins. */
 export type MarginMode = "uniform" | "custom" | "html";
+/** Where the baked-in `N / total` overlay sits on the page. */
 export type NumberPosition = "bottom-center" | "bottom-left" | "bottom-right";
 
+/** Per-edge page margins in millimetres (custom margin mode). */
 export interface EdgeMarginsMm {
   top: number;
   right: number;
@@ -10,6 +13,7 @@ export interface EdgeMarginsMm {
   left: number;
 }
 
+/** Every tunable of the raster + PDF pipeline (clamped via `clampSettings`). */
 export interface PdfSettings {
   /** Page size. A4 = 210x297mm, Letter = 215.9x279.4mm. */
   pageSize: PageSize;
@@ -30,6 +34,7 @@ export interface PdfSettings {
   quality: number;
 }
 
+/** Frozen factory defaults (A4, 10mm, numbers on, 192 DPI). Copy before mutating. */
 export const DEFAULT_SETTINGS: PdfSettings = Object.freeze({
   pageSize: "a4",
   marginMm: 10,
@@ -42,9 +47,12 @@ export const DEFAULT_SETTINGS: PdfSettings = Object.freeze({
   quality: 0.92,
 }) as PdfSettings;
 
+/** A4 page width in mm. */
 export const A4_WIDTH_MM = 210;
+/** A4 page height in mm. */
 export const A4_HEIGHT_MM = 297;
 
+/** Millimetre geometry per `PageSize` (source of truth for PDF + preview). */
 export const PAGE_DIMS_MM: Record<PageSize, { width: number; height: number }> = {
   a4: { width: 210, height: 297 },
   letter: { width: 215.9, height: 279.4 },
@@ -53,6 +61,7 @@ export const PAGE_DIMS_MM: Record<PageSize, { width: number; height: number }> =
 /** CSS pixels for a mm length at 96 CSS dpi. */
 export const mmToPx = (mm: number): number => (mm / 25.4) * 96;
 
+/** Pixel dimensions of a full page at 96 CSS dpi (raster holder size). */
 export function pageDimsPx(pageSize: PageSize): { width: number; height: number } {
   const dims = PAGE_DIMS_MM[pageSize];
   return { width: Math.round(mmToPx(dims.width)), height: Math.round(mmToPx(dims.height)) };
@@ -226,6 +235,10 @@ export function detectPageSize(css: string): PageSize | null {
   return null;
 }
 
+/**
+ * Resolve the active margins: custom edges, the file's own `.page` padding
+ * in `html` mode (falling back to uniform), or the uniform margin.
+ */
 export function effectiveMargins(settings: PdfSettings, htmlStyles?: string): EdgeMarginsMm {
   if (settings.marginMode === "custom") return { ...settings.marginsMm };
   if (settings.marginMode === "html") {
@@ -247,6 +260,7 @@ export function dpiToScale(dpi: number): number {
   return Math.min(4, Math.max(0.75, dpi / 96));
 }
 
+/** Clamp every setting into its valid range (unknown modes reset to uniform). */
 export function clampSettings(s: PdfSettings): PdfSettings {
   const clamp = (v: number, lo: number, hi: number) =>
     Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : lo));

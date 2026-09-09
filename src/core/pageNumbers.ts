@@ -16,6 +16,7 @@ export function pageNumberText(
   return `${start + index} / ${total}`;
 }
 
+/** Inline style for the baked-in page-number overlay (raster + vector agree). */
 export function numberOverlayStyle(position: NumberPosition): string {
   const base =
     "position:absolute;left:0;right:0;font-size:11px;color:#64748b;pointer-events:none;";

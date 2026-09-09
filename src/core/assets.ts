@@ -13,6 +13,7 @@ export function clearInlineCache(): void {
   dataUrlCache.clear();
 }
 
+/** True for fetchable remote URLs (`http(s)://` or protocol-relative). */
 export function isRemoteUrl(url: string): boolean {
   return /^(https?:)?\/\//i.test(url);
 }

@@ -5,6 +5,7 @@ import { effectiveMargins, type NumberPosition, type PageSize } from "./settings
 // Re-exported for existing callers (cycle-free: canonical home is `./pageNumbers`).
 export { pageNumberText };
 
+/** One `.page` block: inner HTML rasterized onto exactly one PDF page. */
 export interface ParsedPage {
   /** Zero-based index of the `.page` block in upload order. */
   index: number;
@@ -14,6 +15,7 @@ export interface ParsedPage {
   outerHtml: string;
 }
 
+/** Uploaded document: ordered pages + shared styles + font links. */
 export interface ParsedDocument {
   pages: ParsedPage[];
   /** Concatenated `<style>` blocks from the uploaded file, re-injected per page. */
@@ -45,6 +47,7 @@ export function parseHtmlPages(source: string): ParsedDocument {
   return { pages, styles: styleText, links: [...new Set(links)] };
 }
 
+/** Options for the vector (iframe) preview of one page. */
 export interface PageSrcDocOpts {
   marginsMm: { top: number; right: number; bottom: number; left: number };
   pageNumberText: string | null;

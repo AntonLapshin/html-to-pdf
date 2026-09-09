@@ -1,0 +1,3 @@
+# Dev-only Python deps for `pytest scripts/` (CI pytest job).
+# WeasyPrint itself stays in requirements.txt — the smoke tests never render.
+pytest>=8
